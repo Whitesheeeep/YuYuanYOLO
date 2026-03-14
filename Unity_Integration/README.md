@@ -25,11 +25,13 @@ Unity_Integration/
 ### 1. 安装 Unity Sentis
 
 在 Unity 中打开 Package Manager：
+
 ```
 Window → Package Manager → 搜索 "Sentis" → Install
 ```
 
 或在 `Packages/manifest.json` 中添加：
+
 ```json
 {
   "dependencies": {
@@ -79,13 +81,13 @@ Unity 项目/
 
 模型可以检测以下 5 个类别：
 
-| ID | 类别名称 | 说明 |
-|----|---------|------|
-| 0  | Stone1  | 石头1 |
-| 1  | Picture | 图片 |
-| 2  | LionLeft | 左侧狮子 |
-| 3  | LionRight | 右侧狮子 |
-| 4  | Stone2  | 石头2 |
+| ID  | 类别名称  | 说明     |
+| --- | --------- | -------- |
+| 0   | Stone1    | 石头1    |
+| 1   | Picture   | 图片     |
+| 2   | LionLeft  | 左侧狮子 |
+| 3   | LionRight | 右侧狮子 |
+| 4   | Stone2    | 石头2    |
 
 ## 📖 详细文档
 
@@ -206,18 +208,22 @@ public class RealtimeDetector : MonoBehaviour
 ## 🐛 常见问题
 
 ### 1. 模型加载失败
+
 - 确保 ONNX 文件在 `Assets/Models/` 文件夹
 - 检查 Sentis 包是否正确安装
 
 ### 2. 检测结果为空
+
 - 降低 `confidenceThreshold`
 - 确保输入图像包含目标物体
 
 ### 3. 性能问题
+
 - 使用 `GPUCompute` 后端
 - 降低检测频率（不需要每帧检测）
 
 ### 4. 类别名称不显示
+
 - 确保 `classes.txt` 在 `Assets/Resources/` 文件夹
 - 在 Inspector 中分配 `Class Names File`
 
