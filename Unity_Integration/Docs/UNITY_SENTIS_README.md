@@ -3,10 +3,12 @@
 ## 📦 文件说明
 
 ### 模型文件
+
 - `best.onnx` - 训练好的 YOLOv8 模型（11.7 MB）
 - 位置: `E:\Master\ultralytics-main\runs\detect\runs\train\yuyuan_exp\weights\best.onnx`
 
 ### Unity 脚本
+
 1. **YuYuanDetector.cs** - 核心检测器（使用 Sentis）
 2. **YuYuanDetectorExample.cs** - 使用示例和可视化
 
@@ -19,6 +21,7 @@ Unity → Window → Package Manager → 搜索 "Sentis" → Install
 ```
 
 或在 `Packages/manifest.json` 中添加：
+
 ```json
 {
   "dependencies": {
@@ -41,6 +44,7 @@ Unity → Window → Package Manager → 搜索 "Sentis" → Install
 ### 4. 设置场景
 
 #### 方法 A：图像检测
+
 1. 创建空 GameObject，命名为 "YuYuanDetector"
 2. 添加 `YuYuanDetector` 组件
 3. 添加 `YuYuanDetectorExample` 组件
@@ -52,6 +56,7 @@ Unity → Window → Package Manager → 搜索 "Sentis" → Install
 5. 运行游戏，按 **空格键** 进行检测
 
 #### 方法 B：摄像头实时检测
+
 1. 同上创建 GameObject 和组件
 2. 在 `YuYuanDetectorExample` 中：
    - 勾选 `Use Webcam`
@@ -60,6 +65,7 @@ Unity → Window → Package Manager → 搜索 "Sentis" → Install
 ## 💻 代码使用示例
 
 ### 基础检测
+
 ```csharp
 using UnityEngine;
 using System.Collections.Generic;
@@ -86,6 +92,7 @@ public class MyDetector : MonoBehaviour
 ```
 
 ### 实时摄像头检测
+
 ```csharp
 using UnityEngine;
 using System.Collections;
@@ -145,6 +152,7 @@ public class RealtimeDetector : MonoBehaviour
 ```
 
 ### 绘制检测框
+
 ```csharp
 void OnGUI()
 {
@@ -164,6 +172,7 @@ void OnGUI()
 ## ⚙️ 参数调整
 
 ### 检测器参数
+
 - **Confidence Threshold** (0.1-1.0): 置信度阈值，越高越严格
   - 推荐: 0.25
 - **IOU Threshold** (0.1-1.0): NMS 阈值，控制重叠检测
@@ -173,7 +182,9 @@ void OnGUI()
   - `CPU`: CPU 运行（兼容性最好）
 
 ### 性能优化
+
 1. **降低检测频率**: 不需要每帧都检测
+
    ```csharp
    // 每 5 帧检测一次
    if (Time.frameCount % 5 == 0)
@@ -192,31 +203,35 @@ void OnGUI()
 
 ## 🎯 检测类别
 
-| ID | 类别名称 | 说明 |
-|----|---------|------|
-| 0  | Stone1  | 石头1 |
-| 1  | Picture | 图片 |
-| 2  | LionLeft | 左侧狮子 |
-| 3  | LionRight | 右侧狮子 |
-| 4  | Stone2  | 石头2 |
+| ID  | 类别名称  | 说明     |
+| --- | --------- | -------- |
+| 0   | Stone1    | 石头1    |
+| 1   | Picture   | 图片     |
+| 2   | LionLeft  | 左侧狮子 |
+| 3   | LionRight | 右侧狮子 |
+| 4   | Stone2    | 石头2    |
 
 ## 🐛 常见问题
 
 ### 1. 模型加载失败
+
 - 确保 ONNX 文件已导入到 Assets 文件夹
 - 检查 Sentis 包是否正确安装
 
 ### 2. 检测结果为空
+
 - 降低 `confidenceThreshold`
 - 确保输入图像包含目标物体
 - 检查图像预处理是否正确
 
 ### 3. 性能问题
+
 - 使用 `GPUCompute` 后端
 - 降低检测频率
 - 减小输入图像尺寸
 
 ### 4. 坐标不准确
+
 - 确保输入图像尺寸正确
 - 检查坐标转换逻辑
 

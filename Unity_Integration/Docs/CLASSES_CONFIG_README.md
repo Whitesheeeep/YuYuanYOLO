@@ -67,6 +67,7 @@ string[] lines = File.ReadAllLines(path);
 ### 示例：改为中文
 
 **修改前:**
+
 ```
 Stone1
 Picture
@@ -76,6 +77,7 @@ Stone2
 ```
 
 **修改后:**
+
 ```
 石头1
 图片

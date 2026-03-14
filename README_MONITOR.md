@@ -21,12 +21,14 @@ python detection_monitor.py
 ```
 
 这将同时启动：
+
 - WebSocket 服务器（监听 ws://0.0.0.0:5000）
 - PyQt 监控界面窗口
 
 ### 2. 连接 Unity 客户端
 
 在 Unity 中：
+
 1. 安装 NativeWebSocket 包：
    - Window → Package Manager → + → Add package from git URL
    - 输入：`https://github.com/endel/NativeWebSocket.git`
@@ -43,6 +45,7 @@ python detection_monitor.py
 ## 功能特点
 
 ### 监控界面功能
+
 - ✅ 实时显示所有连接的设备
 - ✅ 双窗口显示：原始视频流 + 检测后视频流
 - ✅ 设备列表：绿色圆点表示在线设备
@@ -50,6 +53,7 @@ python detection_monitor.py
 - ✅ 状态栏显示当前设备和检测数量
 
 ### WebSocket 服务器功能
+
 - ✅ 接收来自多个 Unity 客户端的图像
 - ✅ 使用 YOLO 进行实时检测
 - ✅ 绘制检测框和标签
@@ -85,16 +89,21 @@ pip install websockets ultralytics opencv-python pillow numpy PyQt5
 ## 常见问题
 
 ### Q: 监控界面无法连接到服务器
+
 A: 确保程序已完全启动，等待 1-2 秒后监控界面会自动连接
 
 ### Q: Unity 客户端无法连接
+
 A: 检查：
+
 1. 服务器 IP 地址是否正确
 2. 防火墙是否允许端口 5000
 3. 网络连接是否正常
 
 ### Q: 检测速度慢
+
 A: 可以调整：
+
 1. Unity 客户端的 FPS 设置（降低帧率）
 2. 图像质量设置（降低 JPEG 质量）
 3. 图像分辨率（降低 targetWidth 和 targetHeight）
@@ -104,6 +113,7 @@ A: 可以调整：
 ### 消息协议
 
 **Unity → 服务器（检测请求）**:
+
 ```json
 {
   "type": "detect",
@@ -114,6 +124,7 @@ A: 可以调整：
 ```
 
 **服务器 → 所有客户端（检测结果）**:
+
 ```json
 {
   "type": "detection_result",
