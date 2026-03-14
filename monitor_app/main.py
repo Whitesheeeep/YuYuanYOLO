@@ -1,17 +1,29 @@
-import sys
 import asyncio
-import websockets
-import json
 import base64
+import json
+import sys
+
 import cv2
 import numpy as np
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout,
-                             QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QSplitter)
+import websockets
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QPixmap, QImage, QColor
+from PyQt5.QtGui import QColor, QImage, QPixmap
+from PyQt5.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
+
 
 class WebSocketThread(QThread):
-    """WebSocket 接收线程"""
+    """WebSocket 接收线程."""
+
     message_received = pyqtSignal(dict)
 
     def __init__(self, server_url):
@@ -38,10 +50,11 @@ class WebSocketThread(QThread):
     def stop(self):
         self.running = False
 
+
 class MonitorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('YuYuan 检测监控系统')
+        self.setWindowTitle("YuYuan 检测监控系统")
         self.setGeometry(100, 100, 1400, 900)
 
         self.devices = {}  # device_id -> device_info
@@ -69,15 +82,15 @@ class MonitorWindow(QMainWindow):
         # 双窗口显示
         video_splitter = QSplitter(Qt.Horizontal)
 
-        self.label_original = QLabel('原始视频流')
+        self.label_original = QLabel("原始视频流")
         self.label_original.setAlignment(Qt.AlignCenter)
-        self.label_original.setStyleSheet('border: 1px solid gray; background-color: #2b2b2b;')
+        self.label_original.setStyleSheet("border: 1px solid gray; background-color: #2b2b2b;")
         self.label_original.setMinimumSize(400, 300)
         video_splitter.addWidget(self.label_original)
 
-        self.label_detected = QLabel('检测后视频流')
+        self.label_detected = QLabel("检测后视频流")
         self.label_detected.setAlignment(Qt.AlignCenter)
-        self.label_detected.setStyleSheet('border: 1px solid gray; background-color: #2b2b2b;')
+        self.label_detected.setStyleSheet("border: 1px solid gray; background-color: #2b2b2b;")
         self.label_detected.setMinimumSize(400, 300)
         video_splitter.addWidget(self.label_detected)
 
@@ -89,26 +102,26 @@ class MonitorWindow(QMainWindow):
 
         main_layout.addWidget(splitter)
 
-        self.statusBar().showMessage('就绪')
+        self.statusBar().showMessage("就绪")
 
     def start_websocket(self):
-        """启动 WebSocket 连接"""
-        self.ws_thread = WebSocketThread('ws://localhost:5000')
+        """启动 WebSocket 连接."""
+        self.ws_thread = WebSocketThread("ws://localhost:5000")
         self.ws_thread.message_received.connect(self.on_message_received)
         self.ws_thread.start()
 
     def on_message_received(self, data):
-        """接收到检测结果"""
-        if data['type'] == 'detection_result':
-            device_id = data['device_id']
-            device_name = data['device_name']
+        """接收到检测结果."""
+        if data["type"] == "detection_result":
+            device_id = data["device_id"]
+            device_name = data["device_name"]
 
             # 更新设备列表
             if device_id not in self.devices:
                 self.devices[device_id] = device_name
                 item = QListWidgetItem(f"● {device_name}")
                 item.setData(Qt.UserRole, device_id)
-                item.setForeground(QColor('green'))
+                item.setForeground(QColor("green"))
                 self.device_list.addItem(item)
 
                 # 自动选择第一个设备
@@ -121,28 +134,28 @@ class MonitorWindow(QMainWindow):
                 self.update_display(data)
 
     def update_display(self, data):
-        """更新视频显示"""
+        """更新视频显示."""
         # 解码原始图像
-        original_img = self.decode_base64_image(data['original_image'])
+        original_img = self.decode_base64_image(data["original_image"])
         self.display_image(self.label_original, original_img)
 
         # 解码检测后图像
-        detected_img = self.decode_base64_image(data['detected_image'])
+        detected_img = self.decode_base64_image(data["detected_image"])
         self.display_image(self.label_detected, detected_img)
 
         # 更新状态栏
-        num_detections = len(data['detections'])
+        num_detections = len(data["detections"])
         self.statusBar().showMessage(f"设备: {data['device_name']} | 检测到 {num_detections} 个目标")
 
     def decode_base64_image(self, base64_str):
-        """解码 base64 图像"""
+        """解码 base64 图像."""
         img_data = base64.b64decode(base64_str)
         nparr = np.frombuffer(img_data, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         return img
 
     def display_image(self, label, cv_image):
-        """显示图像"""
+        """显示图像."""
         if cv_image is None:
             return
 
@@ -157,14 +170,15 @@ class MonitorWindow(QMainWindow):
         label.setPixmap(scaled_pixmap)
 
     def on_device_selected(self, item):
-        """切换设备"""
+        """切换设备."""
         self.current_device_id = item.data(Qt.UserRole)
 
     def closeEvent(self, event):
-        """关闭窗口"""
+        """关闭窗口."""
         self.ws_thread.stop()
         self.ws_thread.wait()
         event.accept()
+
 
 def main():
     app = QApplication(sys.argv)
@@ -172,5 +186,6 @@ def main():
     window.show()
     sys.exit(app.exec_())
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

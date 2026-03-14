@@ -12,6 +12,7 @@
 ```
 
 ### 优势
+
 - ✅ **集中管理**: 模型在服务器端，易于更新
 - ✅ **性能优化**: 服务器可以使用强大的 GPU
 - ✅ **多客户端**: 多个 Unity 客户端可以共享同一服务器
@@ -27,6 +28,7 @@ pip install -r server_requirements.txt
 ```
 
 或手动安装：
+
 ```bash
 pip install flask flask-cors ultralytics opencv-python pillow numpy
 ```
@@ -38,6 +40,7 @@ python detection_server.py
 ```
 
 输出：
+
 ```
 正在加载模型...
 ✓ 模型加载成功
@@ -58,11 +61,13 @@ YuYuan 检测服务器启动
 ### 3. API 接口
 
 #### 健康检查
+
 ```http
 GET http://localhost:5000/health
 ```
 
 响应：
+
 ```json
 {
   "status": "ok",
@@ -72,6 +77,7 @@ GET http://localhost:5000/health
 ```
 
 #### 图像检测
+
 ```http
 POST http://localhost:5000/detect
 Content-Type: application/json
@@ -83,6 +89,7 @@ Content-Type: application/json
 ```
 
 响应：
+
 ```json
 {
   "success": true,
@@ -92,8 +99,10 @@ Content-Type: application/json
       "class_name": "Stone1",
       "confidence": 0.85,
       "bbox": {
-        "x1": 100, "y1": 200,
-        "x2": 300, "y2": 400
+        "x1": 100,
+        "y1": 200,
+        "x2": 300,
+        "y2": 400
       }
     }
   ],
@@ -109,19 +118,18 @@ Content-Type: application/json
 ### 4. 测试服务器
 
 使用 Python 测试：
+
 ```python
-import requests
 import base64
 
+import requests
+
 # 读取图像
-with open('test.jpg', 'rb') as f:
-    image_data = base64.b64encode(f.read()).decode('utf-8')
+with open("test.jpg", "rb") as f:
+    image_data = base64.b64encode(f.read()).decode("utf-8")
 
 # 发送请求
-response = requests.post('http://localhost:5000/detect', json={
-    'image': image_data,
-    'confidence': 0.25
-})
+response = requests.post("http://localhost:5000/detect", json={"image": image_data, "confidence": 0.25})
 
 # 打印结果
 print(response.json())
@@ -132,6 +140,7 @@ print(response.json())
 ### 1. 导入脚本
 
 将以下脚本复制到 `Assets/Scripts/`：
+
 - `YuYuanDetectionClient.cs`
 - `YuYuanClientExample.cs`
 
@@ -148,6 +157,7 @@ print(response.json())
 ### 3. 使用方法
 
 #### 方法 A: 使用示例脚本
+
 ```csharp
 // 运行游戏
 // 按空格键: 检测图像
@@ -155,6 +165,7 @@ print(response.json())
 ```
 
 #### 方法 B: 代码调用
+
 ```csharp
 using UnityEngine;
 
@@ -257,11 +268,13 @@ public class RealtimeDetector : MonoBehaviour
 ## 🌐 网络配置
 
 ### 本地测试（同一台电脑）
+
 ```csharp
 serverUrl = "http://localhost:5000";
 ```
 
 ### 局域网（不同电脑）
+
 ```csharp
 // 服务器 IP: 192.168.1.100
 serverUrl = "http://192.168.1.100:5000";
@@ -270,6 +283,7 @@ serverUrl = "http://192.168.1.100:5000";
 **注意**: 确保防火墙允许 5000 端口
 
 ### 查看服务器 IP
+
 ```bash
 # Windows
 ipconfig
@@ -283,6 +297,7 @@ ifconfig
 ### 1. 图像压缩
 
 在发送前压缩图像：
+
 ```csharp
 // 降低分辨率
 Texture2D compressed = ResizeTexture(original, 640, 480);
@@ -294,6 +309,7 @@ byte[] imageBytes = compressed.EncodeToJPG(75); // 质量 75
 ### 2. 异步检测
 
 避免阻塞主线程：
+
 ```csharp
 // 使用协程
 StartCoroutine(client.DetectImageCoroutine(image));
@@ -305,6 +321,7 @@ client.OnDetectionComplete += HandleResult;
 ### 3. 批量检测
 
 如果需要检测多张图像，使用批量接口：
+
 ```python
 # 服务器端已实现
 @app.route('/detect_batch', methods=['POST'])
@@ -313,6 +330,7 @@ client.OnDetectionComplete += HandleResult;
 ### 4. 调整检测频率
 
 不需要每帧都检测：
+
 ```csharp
 // 每 5 帧检测一次
 if (Time.frameCount % 5 == 0)
@@ -324,34 +342,44 @@ if (Time.frameCount % 5 == 0)
 ## 🐛 常见问题
 
 ### Q1: 连接失败
+
 **A**:
+
 1. 检查服务器是否启动
 2. 检查 URL 是否正确
 3. 检查防火墙设置
 4. 使用 `client.CheckServerHealth()` 测试连接
 
 ### Q2: 检测速度慢
+
 **A**:
+
 1. 降低图像分辨率
 2. 使用 GPU 加速（服务器端）
 3. 降低检测频率
 4. 使用图像压缩
 
 ### Q3: 跨域错误（CORS）
+
 **A**: 服务器已启用 CORS，如果仍有问题：
+
 ```python
 # 在 detection_server.py 中
 CORS(app, resources={r"/*": {"origins": "*"}})
 ```
 
 ### Q4: 超时错误
+
 **A**: 增加超时时间：
+
 ```csharp
 client.timeoutSeconds = 60; // 60 秒
 ```
 
 ### Q5: Base64 编码错误
+
 **A**: 确保图像格式正确：
+
 ```csharp
 // 使用 PNG
 byte[] imageBytes = image.EncodeToPNG();
@@ -362,11 +390,11 @@ byte[] imageBytes = image.EncodeToJPG(90);
 
 ## 📊 性能参考
 
-| 配置 | 检测速度 | 网络延迟 | 总时间 |
-|------|---------|---------|--------|
-| 本地 (localhost) | 30ms | 1ms | ~31ms |
-| 局域网 (1Gbps) | 30ms | 5ms | ~35ms |
-| 局域网 (100Mbps) | 30ms | 20ms | ~50ms |
+| 配置             | 检测速度 | 网络延迟 | 总时间 |
+| ---------------- | -------- | -------- | ------ |
+| 本地 (localhost) | 30ms     | 1ms      | ~31ms  |
+| 局域网 (1Gbps)   | 30ms     | 5ms      | ~35ms  |
+| 局域网 (100Mbps) | 30ms     | 20ms     | ~50ms  |
 
 ## 🔒 安全建议
 
@@ -378,10 +406,11 @@ from flask import request
 
 API_KEY = "your_secret_key"
 
+
 @app.before_request
 def check_auth():
-    if request.headers.get('X-API-Key') != API_KEY:
-        return jsonify({'error': 'Unauthorized'}), 401
+    if request.headers.get("X-API-Key") != API_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
 ```
 
 ```csharp
@@ -393,7 +422,7 @@ www.SetRequestHeader("X-API-Key", "your_secret_key");
 
 ```python
 # 使用 SSL 证书
-app.run(ssl_context=('cert.pem', 'key.pem'))
+app.run(ssl_context=("cert.pem", "key.pem"))
 ```
 
 ### 3. 限制请求频率
@@ -407,6 +436,7 @@ limiter = Limiter(app, default_limits=["100 per minute"])
 ## ✅ 完整工作流程
 
 1. **启动服务器**:
+
    ```bash
    python detection_server.py
    ```
