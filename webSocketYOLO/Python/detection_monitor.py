@@ -1,5 +1,5 @@
 """
-YuYuan YOLO 检测监控系统
+YuYuan YOLO 检测监控系统.
 ======================
 
 功能概述：
@@ -19,29 +19,41 @@ Unity 客户端 --WebSocket--> 服务器 --YOLO检测--> 信号发射器 --Qt信
                                     └--> 广播结果 --> Unity 客户端
 """
 
-import sys
 import asyncio
-import websockets
-import json
 import base64
+import hashlib
+import json
+import socket
+import sys
+import threading
+
 import cv2
 import numpy as np
-import hashlib
+import websockets
+from PyQt5.QtCore import QObject, Qt, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QImage, QPixmap
+from PyQt5.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QSizePolicy,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
+
 from ultralytics import YOLO
-import threading
-import socket
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout,
-                             QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QSplitter, QSizePolicy)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject
-from PyQt5.QtGui import QPixmap, QImage, QColor, QFont
 
 # ============================================================================
 # 全局配置和初始化
 # ============================================================================
 
+
 def get_local_ip():
-    """
-    获取本机局域网 IP 地址
+    """获取本机局域网 IP 地址.
 
     功能：获取本机在局域网中的 IP 地址，供客户端连接使用
 
@@ -66,12 +78,13 @@ def get_local_ip():
         # 如果获取失败，返回本地回环地址
         return "127.0.0.1"
 
+
 # 加载 YOLO 模型（程序启动时加载一次，所有检测共享同一个模型实例）
-model = YOLO(r'../runs/detect/runs/train/yuyuan_exp/weights/best.pt')
+model = YOLO(r"../runs/detect/runs/train/yuyuan_exp/weights/best.pt")
 
 # WebSocket 服务器配置
 ip = "0.0.0.0"  # 监听所有网络接口（允许局域网内的设备连接）
-port = 5000     # 服务器端口
+port = 5000  # 服务器端口
 local_ip = get_local_ip()  # 获取本机局域网 IP
 
 # 存储所有连接的 WebSocket 客户端（Unity 设备）
@@ -94,8 +107,10 @@ CLASS_COLOR_PALETTE = [
     (128, 0, 128),
 ]
 
+
 class ClassColorMap:
-    """类别颜色映射，支持用户覆盖并提供稳定的默认色。"""
+    """类别颜色映射，支持用户覆盖并提供稳定的默认色。."""
+
     def __init__(self, user_colors=None, palette=None, default_color=(0, 255, 0)):
         self.user_colors = user_colors or {}
         self.palette = palette or []
@@ -115,14 +130,15 @@ class ClassColorMap:
             return self.palette[idx]
         return self.default_color
 
+
 class_color_map = ClassColorMap(USER_CLASS_COLORS, CLASS_COLOR_PALETTE)
 # ============================================================================
 # 客户端会话管理
 # ============================================================================
 
+
 class ClientSession:
-    """
-    客户端会话类
+    """客户端会话类.
 
     功能：存储单个客户端的连接信息和状态
 
@@ -133,6 +149,7 @@ class ClientSession:
         remote_address: 客户端远程地址 (IP, port)
         connected_at: 连接时间戳
     """
+
     def __init__(self, device_id, device_name, websocket, remote_address):
         self.device_id = device_id
         self.device_name = device_name
@@ -142,27 +159,29 @@ class ClientSession:
 
     @property
     def ip(self):
-        """获取客户端 IP 地址"""
+        """获取客户端 IP 地址."""
         return self.remote_address[0] if self.remote_address else "unknown"
 
     @property
     def port(self):
-        """获取客户端端口"""
+        """获取客户端端口."""
         return self.remote_address[1] if self.remote_address else 0
 
     def __repr__(self):
-        return f"ClientSession(device_id={self.device_id}, device_name={self.device_name}, ip={self.ip}, port={self.port})"
+        return (
+            f"ClientSession(device_id={self.device_id}, device_name={self.device_name}, ip={self.ip}, port={self.port})"
+        )
+
 
 # ============================================================================
 # 线程间通信机制
 # ============================================================================
 
-class SignalEmitter(QObject):
-    """
-    全局信号发射器
 
-    作用：实现从 WebSocket 线程（后台线程）向 Qt 主线程传递数据
-    原理：Qt 的信号槽机制是线程安全的，可以跨线程传递数据
+class SignalEmitter(QObject):
+    """全局信号发射器.
+
+    作用：实现从 WebSocket 线程（后台线程）向 Qt 主线程传递数据 原理：Qt 的信号槽机制是线程安全的，可以跨线程传递数据
 
     为什么需要这个：
     - WebSocket 服务器运行在 asyncio 事件循环的后台线程中
@@ -170,9 +189,11 @@ class SignalEmitter(QObject):
     - 不能直接从后台线程操作 Qt 界面组件（会导致崩溃）
     - 通过信号槽机制，后台线程发射信号，主线程接收并更新界面
     """
+
     detection_result = pyqtSignal(dict)  # 检测结果信号，携带字典类型的数据
     client_connected = pyqtSignal(str, str, str, int)  # 客户端连接信号 (device_id, device_name, ip, port)
     client_disconnected = pyqtSignal(str)  # 客户端断开信号 (device_id)
+
 
 # 创建全局信号发射器实例（整个程序共享）
 signal_emitter = SignalEmitter()
@@ -181,12 +202,11 @@ signal_emitter = SignalEmitter()
 # 辅助函数
 # ============================================================================
 
-def apply_nms(boxes, scores, iou_threshold=0.5):
-    """
-    非极大值抑制（NMS）
 
-    功能：过滤掉重叠度高的检测框，只保留置信度最高的框
-    原理：
+def apply_nms(boxes, scores, iou_threshold=0.5):
+    """非极大值抑制（NMS）.
+
+    功能：过滤掉重叠度高的检测框，只保留置信度最高的框 原理：
         1. 按置信度从高到低排序
         2. 选择置信度最高的框
         3. 计算该框与其他框的 IoU（交并比）
@@ -247,13 +267,14 @@ def apply_nms(boxes, scores, iou_threshold=0.5):
 
     return keep
 
+
 # ============================================================================
 # WebSocket 服务器核心逻辑
 # ============================================================================
 
+
 async def handle_client(websocket):
-    """
-    处理单个客户端连接
+    """处理单个客户端连接.
 
     功能：
     1. 接收来自 Unity 客户端的图像数据
@@ -264,16 +285,14 @@ async def handle_client(websocket):
     参数：
         websocket: WebSocket 连接对象
 
-    消息格式（接收）：
-    {
+    消息格式（接收）： {
         "type": "detect",
         "device_id": "device_001",
         "device_name": "Android Device 1",
         "image": "base64_encoded_image_data"
     }
 
-    消息格式（发送）：
-    {
+    消息格式（发送）： {
         "type": "detection_result",
         "device_id": "device_001",
         "device_name": "Android Device 1",
@@ -302,9 +321,9 @@ async def handle_client(websocket):
             data = json.loads(message)
 
             # 处理检测请求
-            if data['type'] == 'detect':
-                device_id = data['device_id']
-                device_name = data['device_name']
+            if data["type"] == "detect":
+                device_id = data["device_id"]
+                device_name = data["device_name"]
 
                 # ========== 步骤 0: 注册或更新客户端会话 ==========
                 if device_id not in clients:
@@ -326,7 +345,7 @@ async def handle_client(websocket):
 
                 # ========== 步骤 1: 解码图像 ==========
                 # 将 base64 编码的图像数据解码为二进制
-                image_data = base64.b64decode(data['image'])
+                image_data = base64.b64decode(data["image"])
                 # 将二进制数据转换为 numpy 数组
                 nparr = np.frombuffer(image_data, np.uint8)
                 # 使用 OpenCV 解码为图像矩阵（BGR 格式）
@@ -386,35 +405,40 @@ async def handle_client(websocket):
                     # 在图像上绘制边界框
                     cv2.rectangle(detected_img, (int(x1), int(y1)), (int(x2), int(y2)), box_color, 2)
                     # 在边界框上方绘制类别名称和置信度
-                    cv2.putText(detected_img, f'{class_name} {conf:.2f}',
-                              (int(x1), int(y1)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+                    cv2.putText(
+                        detected_img,
+                        f"{class_name} {conf:.2f}",
+                        (int(x1), int(y1) - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        box_color,
+                        2,
+                    )
 
                     # 将检测结果添加到列表（用于 JSON 响应）
-                    detections.append({
-                        'class': class_name,
-                        'confidence': conf,
-                        'bbox': [int(x1), int(y1), int(x2), int(y2)]
-                    })
+                    detections.append(
+                        {"class": class_name, "confidence": conf, "bbox": [int(x1), int(y1), int(x2), int(y2)]}
+                    )
 
                 # ========== 步骤 5: 编码图像为 base64 ==========
                 # 将原始图像编码为 JPEG 格式
-                _, original_buffer = cv2.imencode('.jpg', img)
+                _, original_buffer = cv2.imencode(".jpg", img)
                 # 转换为 base64 字符串（用于网络传输）
                 original_base64 = base64.b64encode(original_buffer).decode()
 
                 # 将检测后的图像编码为 JPEG 格式
-                _, detected_buffer = cv2.imencode('.jpg', detected_img)
+                _, detected_buffer = cv2.imencode(".jpg", detected_img)
                 # 转换为 base64 字符串
                 detected_base64 = base64.b64encode(detected_buffer).decode()
 
                 # ========== 步骤 6: 构建响应消息 ==========
                 response = {
-                    'type': 'detection_result',
-                    'device_id': device_id,
-                    'device_name': device_name,
-                    'original_image': original_base64,      # 原始图像
-                    'detected_image': detected_base64,      # 带检测框的图像
-                    'detections': detections                # 检测结果列表
+                    "type": "detection_result",
+                    "device_id": device_id,
+                    "device_name": device_name,
+                    "original_image": original_base64,  # 原始图像
+                    "detected_image": detected_base64,  # 带检测框的图像
+                    "detections": detections,  # 检测结果列表
                 }
 
                 # ========== 步骤 7: 发送结果 ==========
@@ -427,7 +451,9 @@ async def handle_client(websocket):
                 await send_to_client(device_id, json.dumps(response))
 
                 if len(detections) > 0:
-                    print(f"[检测] 设备 {device_name} ({session.ip}:{session.port}) - 检测到 {len(detections)} 个目标 (NMS 过滤后)")
+                    print(
+                        f"[检测] 设备 {device_name} ({session.ip}:{session.port}) - 检测到 {len(detections)} 个目标 (NMS 过滤后)"
+                    )
 
     except websockets.exceptions.ConnectionClosed:
         # 客户端正常断开连接
@@ -445,12 +471,11 @@ async def handle_client(websocket):
             # 发送客户端断开信号到监控界面
             signal_emitter.client_disconnected.emit(current_device_id)
 
-async def send_to_client(device_id, message):
-    """
-    发送消息给指定的客户端
 
-    功能：根据 device_id 精确发送消息给对应的客户端
-    优势：
+async def send_to_client(device_id, message):
+    """发送消息给指定的客户端.
+
+    功能：根据 device_id 精确发送消息给对应的客户端 优势：
         - 避免广播造成的带宽浪费
         - 客户端无需判断消息是否属于自己
         - 服务器端统一管理消息路由
@@ -472,12 +497,11 @@ async def send_to_client(device_id, message):
     else:
         print(f"[警告] 设备 {device_id} 不在连接列表中")
 
-async def broadcast(message):
-    """
-    广播消息到所有连接的客户端（保留此函数以备将来使用）
 
-    功能：将消息同时发送给所有连接的设备
-    使用场景：
+async def broadcast(message):
+    """广播消息到所有连接的客户端（保留此函数以备将来使用）.
+
+    功能：将消息同时发送给所有连接的设备 使用场景：
         - 系统通知
         - 全局配置更新
         - 服务器状态广播
@@ -490,17 +514,13 @@ async def broadcast(message):
         - return_exceptions=True 确保某个客户端发送失败不影响其他客户端
     """
     if clients:
-        await asyncio.gather(
-            *[session.websocket.send(message) for session in clients.values()],
-            return_exceptions=True
-        )
+        await asyncio.gather(*[session.websocket.send(message) for session in clients.values()], return_exceptions=True)
+
 
 async def start_websocket_server():
-    """
-    启动 WebSocket 服务器
+    """启动 WebSocket 服务器.
 
-    功能：创建 WebSocket 服务器并持续运行
-    监听地址：ws://{ip}:{port}
+    功能：创建 WebSocket 服务器并持续运行 监听地址：ws://{ip}:{port}
 
     实现细节：
         - 使用 websockets.serve 创建服务器
@@ -517,12 +537,11 @@ async def start_websocket_server():
     async with websockets.serve(handle_client, ip, port):
         await asyncio.Future()  # 永久运行
 
-def run_websocket_server():
-    """
-    在单独线程中运行 WebSocket 服务器
 
-    作用：将 asyncio 事件循环运行在后台线程中
-    原因：
+def run_websocket_server():
+    """在单独线程中运行 WebSocket 服务器.
+
+    作用：将 asyncio 事件循环运行在后台线程中 原因：
         - PyQt5 需要占用主线程运行事件循环
         - WebSocket 服务器需要 asyncio 事件循环
         - 两者不能在同一个线程中运行，因此需要分离
@@ -533,13 +552,14 @@ def run_websocket_server():
     """
     asyncio.run(start_websocket_server())
 
+
 # ============================================================================
 # PyQt5 监控界面
 # ============================================================================
 
+
 class MonitorWindow(QMainWindow):
-    """
-    监控窗口主类
+    """监控窗口主类.
 
     功能：
     1. 显示所有连接的设备列表
@@ -555,9 +575,10 @@ class MonitorWindow(QMainWindow):
     │            │              │                        │
     └─────────────────────────────────────────────────────┘
     """
+
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('YuYuan 检测监控系统')
+        self.setWindowTitle("YuYuan 检测监控系统")
         self.setGeometry(100, 100, 1400, 900)
 
         # 存储设备信息：{device_id: {'name': device_name, 'ip': ip, 'port': port}}
@@ -569,8 +590,7 @@ class MonitorWindow(QMainWindow):
         self.setup_ui()
 
     def setup_ui(self):
-        """
-        设置用户界面
+        """设置用户界面.
 
         布局结构：
         - 主布局：水平分割器（QSplitter）
@@ -599,14 +619,12 @@ class MonitorWindow(QMainWindow):
         self.server_info_label = QLabel()
         self.server_info_label.setAlignment(Qt.AlignCenter)
         self.server_info_label.setStyleSheet(
-            'background-color: #1e1e1e; color: #00ff00; '
-            'padding: 10px; border: 2px solid #00ff00; '
-            'border-radius: 5px; font-weight: bold;'
+            "background-color: #1e1e1e; color: #00ff00; "
+            "padding: 10px; border: 2px solid #00ff00; "
+            "border-radius: 5px; font-weight: bold;"
         )
         server_info_text = (
-            f"🌐 WebSocket 服务器运行中\n"
-            f"局域网地址: ws://{local_ip}:{port}\n"
-            f"本地地址: ws://127.0.0.1:{port}"
+            f"🌐 WebSocket 服务器运行中\n局域网地址: ws://{local_ip}:{port}\n本地地址: ws://127.0.0.1:{port}"
         )
         self.server_info_label.setText(server_info_text)
         self.server_info_label.setFont(QFont("Consolas", 10))
@@ -617,16 +635,16 @@ class MonitorWindow(QMainWindow):
         video_splitter = QSplitter(Qt.Horizontal)
 
         # 原始视频流显示窗口
-        self.label_original = QLabel('原始视频流')
+        self.label_original = QLabel("原始视频流")
         self.label_original.setAlignment(Qt.AlignCenter)
-        self.label_original.setStyleSheet('border: 1px solid gray; background-color: #2b2b2b; color: white;')
+        self.label_original.setStyleSheet("border: 1px solid gray; background-color: #2b2b2b; color: white;")
         self.label_original.setMinimumSize(400, 300)
         video_splitter.addWidget(self.label_original)
 
         # 检测后视频流显示窗口
-        self.label_detected = QLabel('检测后视频流')
+        self.label_detected = QLabel("检测后视频流")
         self.label_detected.setAlignment(Qt.AlignCenter)
-        self.label_detected.setStyleSheet('border: 1px solid gray; background-color: #2b2b2b; color: white;')
+        self.label_detected.setStyleSheet("border: 1px solid gray; background-color: #2b2b2b; color: white;")
         self.label_detected.setMinimumSize(400, 300)
         video_splitter.addWidget(self.label_detected)
 
@@ -640,7 +658,7 @@ class MonitorWindow(QMainWindow):
         main_layout.addWidget(splitter)
 
         # 状态栏显示服务器信息
-        self.statusBar().showMessage(f'就绪 - 等待客户端连接到 ws://{local_ip}:{port}')
+        self.statusBar().showMessage(f"就绪 - 等待客户端连接到 ws://{local_ip}:{port}")
 
         # ========== 连接全局信号 ==========
         # 关键：将全局信号发射器的信号连接到本窗口的槽函数
@@ -651,8 +669,7 @@ class MonitorWindow(QMainWindow):
         signal_emitter.client_disconnected.connect(self.on_client_disconnected)
 
     def on_client_connected(self, device_id, device_name, ip, port):
-        """
-        客户端连接事件处理（槽函数）
+        """客户端连接事件处理（槽函数）.
 
         触发时机：当新客户端连接到服务器时
         执行线程：Qt 主线程
@@ -666,16 +683,12 @@ class MonitorWindow(QMainWindow):
             port: 客户端端口
         """
         # 存储设备信息
-        self.devices[device_id] = {
-            'name': device_name,
-            'ip': ip,
-            'port': port
-        }
+        self.devices[device_id] = {"name": device_name, "ip": ip, "port": port}
 
         # 在设备列表中添加新项，显示设备名称和 IP:端口
         item = QListWidgetItem(f"● {device_name}\n   {ip}:{port}")
         item.setData(Qt.UserRole, device_id)  # 存储设备 ID（用于切换设备）
-        item.setForeground(QColor('green'))   # 绿色表示在线
+        item.setForeground(QColor("green"))  # 绿色表示在线
         self.device_list.addItem(item)
 
         # 自动选择第一个设备
@@ -686,8 +699,7 @@ class MonitorWindow(QMainWindow):
         print(f"[界面] 添加设备: {device_name} ({ip}:{port})")
 
     def on_client_disconnected(self, device_id):
-        """
-        客户端断开事件处理（槽函数）
+        """客户端断开事件处理（槽函数）.
 
         触发时机：当客户端断开连接时
         执行线程：Qt 主线程
@@ -713,9 +725,9 @@ class MonitorWindow(QMainWindow):
         if device_id == self.current_device_id:
             self.current_device_id = None
             self.label_original.clear()
-            self.label_original.setText('原始视频流')
+            self.label_original.setText("原始视频流")
             self.label_detected.clear()
-            self.label_detected.setText('检测后视频流')
+            self.label_detected.setText("检测后视频流")
 
             # 如果还有其他设备，自动选择第一个
             if self.device_list.count() > 0:
@@ -724,8 +736,7 @@ class MonitorWindow(QMainWindow):
                 self.current_device_id = first_item.data(Qt.UserRole)
 
     def on_message_received(self, data):
-        """
-        接收检测结果（槽函数）
+        """接收检测结果（槽函数）.
 
         触发时机：当 WebSocket 线程发射 detection_result 信号时自动调用
         执行线程：Qt 主线程（由 Qt 信号槽机制自动切换）
@@ -747,8 +758,8 @@ class MonitorWindow(QMainWindow):
             设备列表的更新已经由 on_client_connected 处理
             这里只需要更新视频显示即可
         """
-        if data['type'] == 'detection_result':
-            device_id = data['device_id']
+        if data["type"] == "detection_result":
+            device_id = data["device_id"]
 
             # ========== 更新视频显示 ==========
             # 只更新当前选中设备的视频流（避免频繁切换造成界面闪烁）
@@ -756,8 +767,7 @@ class MonitorWindow(QMainWindow):
                 self.update_display(data)
 
     def update_display(self, data):
-        """
-        更新视频显示
+        """更新视频显示.
 
         功能：
         1. 解码并显示原始图像
@@ -768,26 +778,25 @@ class MonitorWindow(QMainWindow):
             data: 检测结果字典
         """
         # 解码并显示原始图像
-        original_img = self.decode_base64_image(data['original_image'])
+        original_img = self.decode_base64_image(data["original_image"])
         self.display_image(self.label_original, original_img)
 
         # 解码并显示检测后图像
-        detected_img = self.decode_base64_image(data['detected_image'])
+        detected_img = self.decode_base64_image(data["detected_image"])
         self.display_image(self.label_detected, detected_img)
 
         # 更新状态栏：显示设备名称、IP:端口 和检测到的目标数量
-        num_detections = len(data['detections'])
-        device_info = self.devices.get(data['device_id'], {})
-        device_name = device_info.get('name', data['device_name'])
-        device_ip = device_info.get('ip', 'unknown')
-        device_port = device_info.get('port', 0)
+        num_detections = len(data["detections"])
+        device_info = self.devices.get(data["device_id"], {})
+        device_name = device_info.get("name", data["device_name"])
+        device_ip = device_info.get("ip", "unknown")
+        device_port = device_info.get("port", 0)
         self.statusBar().showMessage(
             f"设备: {device_name} ({device_ip}:{device_port}) | 检测到 {num_detections} 个目标"
         )
 
     def decode_base64_image(self, base64_str):
-        """
-        解码 base64 图像
+        """解码 base64 图像.
 
         流程：
         1. base64 字符串 -> 二进制数据
@@ -806,8 +815,7 @@ class MonitorWindow(QMainWindow):
         return img
 
     def display_image(self, label, cv_image):
-        """
-        在 QLabel 中显示图像
+        """在 QLabel 中显示图像.
 
         流程：
         1. OpenCV 图像（BGR）-> RGB 格式
@@ -843,8 +851,7 @@ class MonitorWindow(QMainWindow):
         label.setPixmap(scaled_pixmap)
 
     def on_device_selected(self, item):
-        """
-        切换设备（槽函数）
+        """切换设备（槽函数）.
 
         触发时机：用户点击设备列表中的某个设备
         功能：切换当前显示的设备视频流
@@ -856,8 +863,7 @@ class MonitorWindow(QMainWindow):
         self.current_device_id = item.data(Qt.UserRole)
 
     def closeEvent(self, event):
-        """
-        关闭窗口事件处理
+        """关闭窗口事件处理.
 
         触发时机：用户关闭窗口时
         功能：清理资源（当前无需特殊清理，WebSocket 线程是 daemon 线程会自动退出）
@@ -867,13 +873,14 @@ class MonitorWindow(QMainWindow):
         """
         event.accept()
 
+
 # ============================================================================
 # 主程序入口
 # ============================================================================
 
+
 def main():
-    """
-    主函数
+    """主函数.
 
     执行流程：
     1. 启动 WebSocket 服务器（后台线程）
@@ -915,5 +922,6 @@ def main():
     # 进入 Qt 事件循环（阻塞，直到窗口关闭）
     sys.exit(app.exec_())
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
