@@ -11,6 +11,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings  # 2026 推荐路径
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sympy import true
+
 from dotenv import load_dotenv
 load_dotenv()
 
