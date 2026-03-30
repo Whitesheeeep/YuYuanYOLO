@@ -5,7 +5,7 @@ from ultralytics import YOLO
 import os
 
 # 模型和数据路径
-MODEL_PATH = r'E:\Master\ultralytics-main\runs\detect\runs\train\yuyuan_exp\weights\best.pt'
+MODEL_PATH = r'/runs/detect/runs/train/yuyuan_exp/weights/best.pt'
 VAL_IMAGES = r'E:\Master\ultralytics-main\datasets\YuYuan\images\val'
 
 def quick_test():

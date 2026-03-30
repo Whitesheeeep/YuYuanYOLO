@@ -11,7 +11,7 @@ def main():
     print(f"使用设备: {device}")
 
     # 加载预训练模型
-    model = YOLO('yolov8n.pt')  # 使用 nano 模型（最快）
+    model = YOLO('../yolov8n.pt')  # 使用 nano 模型（最快）
     # model = YOLO('yolov8s.pt')  # 或使用 small 模型（更准确）
     # model = YOLO('yolov8m.pt')  # 或使用 medium 模型（平衡）
 

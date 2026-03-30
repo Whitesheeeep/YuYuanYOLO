@@ -202,3 +202,4 @@ calibration_*.npy
 # Training logs
 args.yaml
 results.csv
+/cache/

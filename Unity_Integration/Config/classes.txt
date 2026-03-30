@@ -1,5 +1,0 @@
-Stone1
-Picture
-LionLeft
-LionRight
-Stone2

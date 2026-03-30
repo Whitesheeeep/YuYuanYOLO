@@ -16,7 +16,7 @@ app = Flask(__name__)
 CORS(app)  # 允许跨域请求
 
 # 加载模型（启动时加载一次）
-MODEL_PATH = r'E:\Master\ultralytics-main\runs\detect\runs\train\yuyuan_exp\weights\best.pt'
+MODEL_PATH = r'/runs/detect/runs/train/yuyuan_exp/weights/best.pt'
 model = None
 
 # 类别名称

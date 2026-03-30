@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 # 模型路径
-MODEL_PATH = r'E:\Master\ultralytics-main\runs\detect\runs\train\yuyuan_exp\weights\best.pt'
+MODEL_PATH = r'/runs/detect/runs/train/yuyuan_exp/weights/best.pt'
 
 def test_single_image(image_path, conf_threshold=0.25):
     """

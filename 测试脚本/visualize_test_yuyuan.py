@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 # 模型路径
-MODEL_PATH = r'E:\Master\ultralytics-main\runs\detect\runs\train\yuyuan_exp\weights\best.pt'
+MODEL_PATH = r'/runs/detect/runs/train/yuyuan_exp/weights/best.pt'
 VAL_IMAGES = r'E:\Master\ultralytics-main\datasets\YuYuan\images\val'
 
 # 类别颜色映射

@@ -159,7 +159,7 @@ if __name__ == '__main__':
 
     # 1. 预测单张图片
     model_path = 'runs/train/yuyuan_exp/weights/best.pt'  # 训练好的模型
-    image_path = r'E:\Master\ultralytics-main\TestImgs\img.png'  # 测试图片路径
+    image_path = r'/TestImgs/img.png'  # 测试图片路径
 
     # predict_image(model_path, image_path)
 

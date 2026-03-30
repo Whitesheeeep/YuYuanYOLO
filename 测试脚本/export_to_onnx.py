@@ -6,7 +6,7 @@ from ultralytics import YOLO
 import os
 
 # 模型路径
-MODEL_PATH = r'E:\Master\ultralytics-main\runs\detect\runs\train\yuyuan_exp\weights\best.pt'
+MODEL_PATH = r'/runs/detect/runs/train/yuyuan_exp/weights/best.pt'
 
 def export_to_onnx():
     """
