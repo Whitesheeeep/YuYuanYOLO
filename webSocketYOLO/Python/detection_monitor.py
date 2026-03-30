@@ -67,7 +67,7 @@ def get_local_ip():
         return "127.0.0.1"
 
 # 加载 YOLO 模型（程序启动时加载一次，所有检测共享同一个模型实例）
-model = YOLO(r'../runs/detect/runs/train/yuyuan_exp/weights/best.pt')
+model = YOLO(r'E:\Master\ultralytics-main\runs\detect\runs\train\yuyuan_exp\weights\best.pt')
 
 # WebSocket 服务器配置
 ip = "0.0.0.0"  # 监听所有网络接口（允许局域网内的设备连接）
@@ -127,13 +127,15 @@ class ClientSession:
     功能：存储单个客户端的连接信息和状态
 
     属性：
+        connection_id: 服务器生成的唯一连接标识 (ip:port)
         device_id: 设备唯一标识符
         device_name: 设备名称
         websocket: WebSocket 连接对象
         remote_address: 客户端远程地址 (IP, port)
         connected_at: 连接时间戳
     """
-    def __init__(self, device_id, device_name, websocket, remote_address):
+    def __init__(self, connection_id, device_id, device_name, websocket, remote_address):
+        self.connection_id = connection_id
         self.device_id = device_id
         self.device_name = device_name
         self.websocket = websocket
@@ -151,7 +153,7 @@ class ClientSession:
         return self.remote_address[1] if self.remote_address else 0
 
     def __repr__(self):
-        return f"ClientSession(device_id={self.device_id}, device_name={self.device_name}, ip={self.ip}, port={self.port})"
+        return f"ClientSession(conn_id={self.connection_id}, device_id={self.device_id}, device_name={self.device_name}, ip={self.ip}, port={self.port})"
 
 # ============================================================================
 # 线程间通信机制
@@ -170,9 +172,9 @@ class SignalEmitter(QObject):
     - 不能直接从后台线程操作 Qt 界面组件（会导致崩溃）
     - 通过信号槽机制，后台线程发射信号，主线程接收并更新界面
     """
-    detection_result = pyqtSignal(dict)  # 检测结果信号，携带字典类型的数据
-    client_connected = pyqtSignal(str, str, str, int)  # 客户端连接信号 (device_id, device_name, ip, port)
-    client_disconnected = pyqtSignal(str)  # 客户端断开信号 (device_id)
+    detection_result = pyqtSignal(dict, str)  # 检测结果信号 (response_dict, connection_id)
+    client_connected = pyqtSignal(str, str, str, str, int)  # 客户端连接信号 (connection_id, device_id, device_name, ip, port)
+    client_disconnected = pyqtSignal(str)  # 客户端断开信号 (connection_id)
 
 # 创建全局信号发射器实例（整个程序共享）
 signal_emitter = SignalEmitter()
@@ -290,10 +292,12 @@ async def handle_client(websocket):
     """
     # 获取客户端远程地址（IP 和端口）
     remote_address = websocket.remote_address
-    print(f"新连接来自: {remote_address[0]}:{remote_address[1]}")
+    # 生成服务器端唯一连接标识：基于物理连接的 IP:Port
+    connection_id = f"{remote_address[0]}:{remote_address[1]}"
+    print(f"新连接来自: {remote_address[0]}:{remote_address[1]}, connection_id={connection_id}")
 
-    # 临时存储 device_id，用于断开连接时清理
-    current_device_id = None
+    # 临时存储 connection_id，用于断开连接时精确清理
+    current_connection_id = None
 
     try:
         # 持续监听客户端消息（异步迭代器）
@@ -307,22 +311,26 @@ async def handle_client(websocket):
                 device_name = data['device_name']
 
                 # ========== 步骤 0: 注册或更新客户端会话 ==========
-                if device_id not in clients:
-                    # 新客户端，创建会话
-                    session = ClientSession(device_id, device_name, websocket, remote_address)
-                    clients[device_id] = session
-                    current_device_id = device_id
+                # 注意：即使两个客户端的 device_id 相同，只要 connection_id 不同，就视为不同会话
+                if connection_id not in clients:
+                    # 新连接，创建会话
+                    session = ClientSession(connection_id, device_id, device_name, websocket, remote_address)
+                    clients[connection_id] = session
+                    current_connection_id = connection_id
                     print(f"[注册] 新设备: {session}")
                     print(f"当前连接设备数: {len(clients)}")
 
-                    # 发送客户端连接信号到监控界面
-                    signal_emitter.client_connected.emit(device_id, device_name, session.ip, session.port)
+                    # 发送客户端连接信号到监控界面（携带 connection_id）
+                    signal_emitter.client_connected.emit(connection_id, device_id, device_name, session.ip, session.port)
                 else:
-                    # 已存在的客户端，更新 WebSocket 连接（可能重连）
-                    session = clients[device_id]
+                    # 已存在的连接（同一 IP:Port 重连），更新 WebSocket 引用
+                    session = clients[connection_id]
                     session.websocket = websocket
                     session.remote_address = remote_address
-                    current_device_id = device_id
+                    # device_id / device_name 也允许更新
+                    session.device_id = device_id
+                    session.device_name = device_name
+                    current_connection_id = connection_id
 
                 # ========== 步骤 1: 解码图像 ==========
                 # 将 base64 编码的图像数据解码为二进制
@@ -418,13 +426,12 @@ async def handle_client(websocket):
                 }
 
                 # ========== 步骤 7: 发送结果 ==========
-                # 6.1 通过 Qt 信号发送到监控界面（线程安全）
-                # 监控界面需要接收所有设备的检测结果
-                signal_emitter.detection_result.emit(response)
+                # 6.1 通过 Qt 信号发送到监控界面（携带 connection_id 以便精确路由）
+                signal_emitter.detection_result.emit(response, connection_id)
 
                 # 6.2 只发送给对应的客户端（精确投递，不广播）
-                # 服务器端判断消息归属，客户端无需判断
-                await send_to_client(device_id, json.dumps(response))
+                # 服务器端通过 connection_id 判断消息归属，客户端无需判断
+                await send_to_client(connection_id, json.dumps(response))
 
                 if len(detections) > 0:
                     print(f"[检测] 设备 {device_name} ({session.ip}:{session.port}) - 检测到 {len(detections)} 个目标 (NMS 过滤后)")
@@ -436,41 +443,41 @@ async def handle_client(websocket):
         # 其他异常
         print(f"[错误] 处理客户端消息时出错: {e}")
     finally:
-        # 清理：从连接字典中移除断开的客户端
-        if current_device_id and current_device_id in clients:
-            removed_session = clients.pop(current_device_id)
+        # 清理：从连接字典中精确移除当前断开的客户端（按 connection_id 而非 device_id）
+        if current_connection_id and current_connection_id in clients:
+            removed_session = clients.pop(current_connection_id)
             print(f"[移除] 设备: {removed_session}")
             print(f"当前连接设备数: {len(clients)}")
 
             # 发送客户端断开信号到监控界面
-            signal_emitter.client_disconnected.emit(current_device_id)
+            signal_emitter.client_disconnected.emit(current_connection_id)
 
-async def send_to_client(device_id, message):
+async def send_to_client(connection_id, message):
     """
     发送消息给指定的客户端
 
-    功能：根据 device_id 精确发送消息给对应的客户端
+    功能：根据 connection_id 精确发送消息给对应的客户端
     优势：
         - 避免广播造成的带宽浪费
         - 客户端无需判断消息是否属于自己
         - 服务器端统一管理消息路由
 
     参数：
-        device_id: 目标设备 ID
+        connection_id: 服务器端唯一连接标识（IP:Port 格式）
         message: JSON 字符串格式的消息
 
     异常处理：
         - 如果客户端不存在，记录警告
         - 如果发送失败，捕获异常并记录
     """
-    if device_id in clients:
-        session = clients[device_id]
+    if connection_id in clients:
+        session = clients[connection_id]
         try:
             await session.websocket.send(message)
         except Exception as e:
-            print(f"[错误] 发送消息到设备 {device_id} 失败: {e}")
+            print(f"[错误] 发送消息到连接 {connection_id} (设备: {session.device_id}) 失败: {e}")
     else:
-        print(f"[警告] 设备 {device_id} 不在连接列表中")
+        print(f"[警告] 连接 {connection_id} 不在连接列表中")
 
 async def broadcast(message):
     """
@@ -560,10 +567,10 @@ class MonitorWindow(QMainWindow):
         self.setWindowTitle('YuYuan 检测监控系统')
         self.setGeometry(100, 100, 1400, 900)
 
-        # 存储设备信息：{device_id: {'name': device_name, 'ip': ip, 'port': port}}
+        # 存储设备信息：{connection_id: {'name': device_name, 'device_id': device_id, 'ip': ip, 'port': port}}
         self.devices = {}
-        # 当前选中的设备 ID
-        self.current_device_id = None
+        # 当前选中的 connection_id
+        self.current_connection_id = None
 
         # 初始化界面
         self.setup_ui()
@@ -650,42 +657,46 @@ class MonitorWindow(QMainWindow):
         signal_emitter.client_connected.connect(self.on_client_connected)
         signal_emitter.client_disconnected.connect(self.on_client_disconnected)
 
-    def on_client_connected(self, device_id, device_name, ip, port):
+    def on_client_connected(self, connection_id, device_id, device_name, ip, port):
         """
         客户端连接事件处理（槽函数）
 
         触发时机：当新客户端连接到服务器时
         执行线程：Qt 主线程
 
-        功能：在设备列表中添加新设备，显示设备名称、IP 和端口
+        功能：在设备列表中添加新设备，显示设备名称和 IP:Port
 
         参数：
-            device_id: 设备唯一标识
+            connection_id: 服务器端唯一连接标识（IP:Port 格式）
+            device_id: 客户端上报的设备标识
             device_name: 设备名称
             ip: 客户端 IP 地址
             port: 客户端端口
         """
-        # 存储设备信息
-        self.devices[device_id] = {
+        # 存储设备信息（使用 connection_id 作为键，可区分相同 device_id 的不同连接）
+        self.devices[connection_id] = {
             'name': device_name,
+            'device_id': device_id,
             'ip': ip,
             'port': port
         }
 
-        # 在设备列表中添加新项，显示设备名称和 IP:端口
-        item = QListWidgetItem(f"● {device_name}\n   {ip}:{port}")
-        item.setData(Qt.UserRole, device_id)  # 存储设备 ID（用于切换设备）
-        item.setForeground(QColor('green'))   # 绿色表示在线
+        # 在设备列表中添加新项，显示设备名称和 connection_id
+        # 注意：相同 device_id 的不同连接会用 connection_id（IP:Port）区分
+        display_text = f"● {device_name} [{device_id}]\n   {connection_id}"
+        item = QListWidgetItem(display_text)
+        item.setData(Qt.UserRole, connection_id)  # 存储 connection_id
+        item.setForeground(QColor('green'))        # 绿色表示在线
         self.device_list.addItem(item)
 
         # 自动选择第一个设备
-        if self.current_device_id is None:
-            self.current_device_id = device_id
+        if self.current_connection_id is None:
+            self.current_connection_id = connection_id
             self.device_list.setCurrentRow(0)
 
-        print(f"[界面] 添加设备: {device_name} ({ip}:{port})")
+        print(f"[界面] 添加设备: {device_name} [{device_id}] @ {connection_id}")
 
-    def on_client_disconnected(self, device_id):
+    def on_client_disconnected(self, connection_id):
         """
         客户端断开事件处理（槽函数）
 
@@ -695,23 +706,23 @@ class MonitorWindow(QMainWindow):
         功能：从设备列表中移除断开的设备
 
         参数：
-            device_id: 设备唯一标识
+            connection_id: 服务器端唯一连接标识（IP:Port 格式）
         """
         # 从设备字典中移除
-        if device_id in self.devices:
-            device_info = self.devices.pop(device_id)
-            print(f"[界面] 移除设备: {device_info['name']} ({device_info['ip']}:{device_info['port']})")
+        if connection_id in self.devices:
+            device_info = self.devices.pop(connection_id)
+            print(f"[界面] 移除设备: {device_info['name']} [{device_info['device_id']}] @ {connection_id}")
 
         # 从列表控件中移除
         for i in range(self.device_list.count()):
             item = self.device_list.item(i)
-            if item.data(Qt.UserRole) == device_id:
+            if item.data(Qt.UserRole) == connection_id:
                 self.device_list.takeItem(i)
                 break
 
         # 如果移除的是当前选中的设备，清空显示
-        if device_id == self.current_device_id:
-            self.current_device_id = None
+        if connection_id == self.current_connection_id:
+            self.current_connection_id = None
             self.label_original.clear()
             self.label_original.setText('原始视频流')
             self.label_detected.clear()
@@ -721,9 +732,9 @@ class MonitorWindow(QMainWindow):
             if self.device_list.count() > 0:
                 self.device_list.setCurrentRow(0)
                 first_item = self.device_list.item(0)
-                self.current_device_id = first_item.data(Qt.UserRole)
+                self.current_connection_id = first_item.data(Qt.UserRole)
 
-    def on_message_received(self, data):
+    def on_message_received(self, data, connection_id):
         """
         接收检测结果（槽函数）
 
@@ -731,7 +742,7 @@ class MonitorWindow(QMainWindow):
         执行线程：Qt 主线程（由 Qt 信号槽机制自动切换）
 
         功能：
-        1. 如果是当前选中的设备，更新视频显示
+        1. 如果是当前选中的设备（按 connection_id 比对），更新视频显示
         2. 更新状态栏信息
 
         参数：
@@ -742,17 +753,11 @@ class MonitorWindow(QMainWindow):
                 - original_image: 原始图像（base64）
                 - detected_image: 检测后图像（base64）
                 - detections: 检测结果列表
-
-        注意：
-            设备列表的更新已经由 on_client_connected 处理
-            这里只需要更新视频显示即可
+            connection_id: 服务器端唯一连接标识（IP:Port 格式）
         """
         if data['type'] == 'detection_result':
-            device_id = data['device_id']
-
-            # ========== 更新视频显示 ==========
-            # 只更新当前选中设备的视频流（避免频繁切换造成界面闪烁）
-            if device_id == self.current_device_id:
+            # 按 connection_id 比对（而非 device_id），确保相同 device_id 的不同连接独立显示
+            if connection_id == self.current_connection_id:
                 self.update_display(data)
 
     def update_display(self, data):
@@ -852,8 +857,8 @@ class MonitorWindow(QMainWindow):
         参数：
             item: QListWidgetItem 对象
         """
-        # 从 item 中获取存储的 device_id
-        self.current_device_id = item.data(Qt.UserRole)
+        # 从 item 中获取存储的 connection_id
+        self.current_connection_id = item.data(Qt.UserRole)
 
     def closeEvent(self, event):
         """
