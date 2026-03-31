@@ -146,6 +146,7 @@ class YuYuanRAG:
                 # 2026 推荐使用 similarity_search 保持简单语义对齐
                 # 使用的是 from_Documents，默认为 IndexFlatL2 索引（欧氏距离），距离越小越相似
                 docs = self.vectorstore.similarity_search(query, k=k)
+                print(f"[RAG] 基础检索返回 {len(docs)} 条结果: {docs[0].page_content}")
                 return [doc.page_content for doc in docs]
             except Exception as e:
                 logger.error(f"[RAG] 检索出错: {e}")
@@ -153,6 +154,7 @@ class YuYuanRAG:
         else:
             try:
                 compressed_docs = self.compression_retriver.invoke(query)
+                print(f"[RAG] 重排序后返回 {len(compressed_docs)} 条结果: {compressed_docs[0].page_content}")
                 return [doc.page_content for doc in compressed_docs[:k]]
 
             except Exception as e:
@@ -161,26 +163,43 @@ class YuYuanRAG:
                 docs = self.vectorstore.similarity_search(query, k=k)
                 return [doc.page_content for doc in docs]
 
-    def retrieve_with_score(self, query: str, k: int = 3, threshold: float = 0.6) -> List[Tuple[str, float]]:
-        """带分数过滤的精细检索"""
+    def retrieve_with_score(self, query: str, k: int = 3, threshold: float = 0.6, rerank: bool = true) -> List[Tuple[str, float]]:
         if not self.is_ready():
             return []
 
-        try:
-            # 返回的是 (Document, score)
-            # FAISS 默认 L2 距离，score 越小越相似
-            docs_and_scores = self.vectorstore.similarity_search_with_score(query, k=k)
+        if not rerank:
+            """带分数过滤的精细检索"""
+            try:
+                # 返回的是 (Document, score)
+                # FAISS 默认 L2 距离，score 越小越相似
+                docs_and_scores = self.vectorstore.similarity_search_with_score(query, k=k)
 
-            results = []
-            for doc, score in docs_and_scores:
-                # 距离转相似度的经验公式
-                similarity = 1 / (1 + score)
-                if similarity >= threshold:
-                    results.append((doc.page_content, float(similarity)))
-            return results
-        except Exception as e:
-            logger.error(f"[RAG] 分数检索出错: {e}")
-            return []
+                results = []
+                for doc, score in docs_and_scores:
+                    # 距离转相似度的经验公式
+                    similarity = 1 / (1 + score)
+                    if similarity >= threshold:
+                        results.append((doc.page_content, float(similarity)))
+                return results
+            except Exception as e:
+                logger.error(f"[RAG] 分数检索出错: {e}")
+                return []
+        else:
+            try:
+                compressed_docs = self.compression_retriver.invoke(query)
+                print(f"[RAG] 重排序后返回 {len(compressed_docs)} 条结果，第 0 条: {compressed_docs[0].page_content}")
+                # 这里我们没有直接的分数输出，因为 FlashrankRerank 只返回重排序后的文档列表，没有暴露分数接口
+                return [(doc.page_content, 1.0) for doc in compressed_docs[:k]]  # 2026年版本调整：重排序结果默认相似度为 1.0，实际应用中可以根据需要调整为其他值
+            except Exception as e:
+                logger.error(f"[RAG] 检索或重排序出错: {e}")
+                # 降级处理：如果 Reranker 出错，退回到基础的 FAISS 检索
+                docs_and_scores = self.vectorstore.similarity_search_with_score(query, k=k)
+                results = []
+                for doc, score in docs_and_scores:
+                    similarity = 1 / (1 + score)
+                    if similarity >= threshold:
+                        results.append((doc.page_content, float(similarity)))
+                return results
 
     def is_ready(self) -> bool:
         """检查引擎是否可用"""
