@@ -187,7 +187,7 @@ class YuYuanRAG:
         else:
             try:
                 compressed_docs = self.compression_retriver.invoke(query)
-                print(f"[RAG] 重排序后返回 {len(compressed_docs)} 条结果，第 0 条: {compressed_docs[0].page_content}")
+                print(f"[RAG] 重排序后返回 {len(compressed_docs)} 条结果，第 0 条: {compressed_docs[0].page_content[:100]}...")
                 # 这里我们没有直接的分数输出，因为 FlashrankRerank 只返回重排序后的文档列表，没有暴露分数接口
                 return [(doc.page_content, 1.0) for doc in compressed_docs[:k]]  # 2026年版本调整：重排序结果默认相似度为 1.0，实际应用中可以根据需要调整为其他值
             except Exception as e:
