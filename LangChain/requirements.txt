@@ -1,0 +1,25 @@
+# Dependencies extracted from:
+# - LangChain/guidance_agent.py
+# - LangChain/rag_engine.py
+
+# LangChain stack
+langchain-core
+langchain-openai
+langchain-community
+langchain-classic
+langchain-huggingface
+langchain-text-splitters
+
+# RAG / rerank
+flashrank
+faiss-cpu
+
+# Embedding runtime (used by HuggingFaceEmbeddings)
+sentence-transformers
+
+# Utilities
+pydantic
+Pillow
+python-dotenv
+sympy
+
