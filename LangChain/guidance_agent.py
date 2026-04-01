@@ -12,7 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 # 假设你的项目结构中包含这些
 from . import config
@@ -124,6 +124,23 @@ class YuYuanGuidanceAgent:
                         # 替换为纯文本，彻底切断下一轮的 Base64 传输
                         history.messages[i].content = f"[已处理图像请求]: {query}"
                         break
+
+    def print_history(self, session_id: str):
+        history = self.session_store.get(session_id)
+        if not history:
+            print(f"[Session] 无历史记录: {session_id}")
+            return
+        print(f"[Session] 历史记录 ({session_id}):")
+        # print("=" * 20)
+        # print(history.messages)
+        # print("=" * 20)
+        # print(history)
+        for msg in history.messages:
+            # prefix = "AI" if msg.is_ai else "User"
+            prefix = "AI" if isinstance(msg, AIMessage) else "User"
+            # print(msg)
+            content_preview = str(msg.content)[:60].replace("\n", " ") + ("..." if len(str(msg.content)) > 60 else "")
+            print(f"  [{prefix}] {content_preview}")
 
     # 无图像识别的文本导览接口，适合纯文本查询
     async def generate_guidance(
