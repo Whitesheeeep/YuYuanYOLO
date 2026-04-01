@@ -7,6 +7,9 @@
 DOUBao_API_KEY = "98af0e67-fd36-4973-86f4-69a85425ee06"
 DOUBao_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DOUBao_MODEL = "doubao-seed-2-0-mini-260215"
+# 备用模型：
+# DOUBao_MODEL = "doubao-seed-2-0-lite-260215"
+# DOUBao_MODEL = "doubao-seed-2-0-pro-260215"
 
 #Agent 配置
 RERANK = True #默认需要重排
