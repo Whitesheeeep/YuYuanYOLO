@@ -59,8 +59,8 @@ async def test_generate_guidance_with_image_path():
         img.save(img_path)
 
         answer = await agent.generate_guidance_with_image(
-            "这张图片里有什么？",
-            image_path="E:\Master\LangChain\LionRight.png",
+            "这张图片里有什么, 15 字以内，快速回答",
+            image_path=r"D:\Yuyuan_2\YuyuanYOLO\test.png",
             session_id="integration_img_01",
         )
         print(answer)

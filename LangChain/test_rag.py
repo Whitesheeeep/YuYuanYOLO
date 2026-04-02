@@ -7,7 +7,7 @@ import os
 import sys
 
 # 确保可以导入 LangChain 包
-sys.path.insert(0, "E:\\Master\\ultralytics-main")
+
 
 
 from LangChain.rag_engine import YuYuanRAG

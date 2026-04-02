@@ -3,6 +3,9 @@ import io
 import base64
 import time
 from typing import Optional
+
+from langchain_community.callbacks import get_openai_callback
+from langchain_core.runnables import RunnableConfig
 from pydantic import SecretStr
 from PIL import Image
 
@@ -13,6 +16,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from sympy import false
 
 # 假设你的项目结构中包含这些
 from . import config
@@ -51,9 +55,10 @@ class YuYuanGuidanceAgent:
         # 4. 构建 Prompt 模板 (包含记忆占位符)
         self.prompt_template = ChatPromptTemplate.from_messages([
             ("system", self.base_system_content + "\n\n【实时背景资料】：\n{context}"),
+            # ("system", "{context}"),
             MessagesPlaceholder(variable_name="history"),  # 记忆将注入到这里
             # MessagesPlaceholder(variable_name="input"),
-            ("human", "{input}"),
+            MessagesPlaceholder(variable_name="input") # 这里接收原始消息列表
         ])
 
         # 5. 内存记忆存储 (Session 字典)
@@ -104,7 +109,7 @@ class YuYuanGuidanceAgent:
         """执行 RAG 检索并格式化"""
         if not query:
             return "（未收到有效输入）"
-        results = self.rag.retrieve(query, k=self.rerank_top_k, rerank=self.rerank)
+        results = self.rag.retrieve_with_score(query, k=self.rerank_top_k, rerank=self.rerank)
         if not results:
             return "暂无相关景点历史记录。"
         return "\n".join([f"- {r}" for r in results])
@@ -156,7 +161,7 @@ class YuYuanGuidanceAgent:
         # 注意：configurable 参数是告诉 LangChain 应该用哪个 session_id
         try:
             answer = await self.chain_with_history.ainvoke(
-                {"context": context, "input": user_query},
+                {"context": context, "input": [HumanMessage(content=user_query)]},
                 config={"configurable": {"session_id": session_id}}
             )
             return answer
@@ -210,11 +215,11 @@ class YuYuanGuidanceAgent:
 
             start_time = time.perf_counter()
             context = self._rag_retrieve_wrapper(user_query)
+            # context = ""
             end_time = time.perf_counter()
             print("[RAG] 检索耗时: {:.2f} 秒".format(end_time - start_time))
 
             # history = self._get_session_history(session_id)
-            system_content = self.base_system_content + "\n\n【实时背景资料】：\n" + context
             effective_query = user_query or "请结合这张图片给出导览说明。"
 
             human_content = [
@@ -229,8 +234,12 @@ class YuYuanGuidanceAgent:
             # llm_output = await self.llm.ainvoke(messages)
 
             start_time = time.perf_counter()
-            output = await self.chain_with_history.ainvoke({"context": context, "input": human_content},
-                                            config={"configurable": {"session_id": session_id}})
+            config:RunnableConfig = {"configurable": {"session_id": session_id}}
+            print(f"[Agent] 输入为 {context[:10]} 和 {human_content[0]}")
+            with get_openai_callback() as callback:
+                output = await self.chain_with_history.ainvoke({"context": context, "input": [HumanMessage(content=human_content)]},
+                                                config=config)
+                print(f"[LLM] Tokens - Prompt: {callback.prompt_tokens}, Completion: {callback.completion_tokens}, Total: {callback.total_tokens}")
             end_time = time.perf_counter()
             print("[LLM] 响应耗时: {:.2f} 秒".format(end_time - start_time))
             # if self.output_total_tokens:

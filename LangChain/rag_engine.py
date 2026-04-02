@@ -16,20 +16,22 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 假设你的项目结构中有 config.py
-try:
-    from . import config
-except ImportError:
-    # 兜底配置，防止独立运行时报错
-    class MockConfig:
-        FAISS_INDEX_PATH = "./data/faiss_index"
-        KNOWLEDGE_BASE_PATH = "./data/yuyuan_kb.txt"
-        EMBEDDING_MODEL = "BAAI/bge-m3"
-        EMBEDDING_DEVICE = "cuda"  # 或 "cpu"
-        CHUNK_SIZE = 300
-        CHUNK_OVERLAP = 50
-
-
-    config = MockConfig()
+from . import config
+# try:
+#     import config
+# except ImportError:
+#     print("config 加载出现问题")
+#     # 兜底配置，防止独立运行时报错
+#     class MockConfig:
+#         FAISS_INDEX_PATH = "./data/faiss_index"
+#         KNOWLEDGE_BASE_PATH = "./data/yuyuan_kb.txt"
+#         EMBEDDING_MODEL = "BAAI/bge-m3"
+#         EMBEDDING_DEVICE = "cuda"  # 或 "cpu"
+#         CHUNK_SIZE = 300
+#         CHUNK_OVERLAP = 50
+#
+#
+#     config = MockConfig()
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -58,11 +60,11 @@ class YuYuanRAG:
 
         if self.vectorstore:
             self.base_retriever = self.vectorstore.as_retriever(search_kwargs={"k": 10})
+            self._init_compression_retriver()
         else:
             self.base_retriever = None
+            self.compression_retriver = None
             logger.warning("[RAG] 未找到有效索引，请确保后续调用 build_from_text()")
-
-        self._init_compression_retriver()
 
     def _init_embeddings(self):
         """初始化嵌入模型，增加异常捕获"""
@@ -131,12 +133,17 @@ class YuYuanRAG:
         # 构建向量库
         self.vectorstore = FAISS.from_documents(documents, self.embeddings)
 
+        # 初始化 retriever
+        self.base_retriever = self.vectorstore.as_retriever(search_kwargs={"k": 10})
+        self._init_compression_retriver()
+
         # 持久化
         os.makedirs(self.index_path, exist_ok=True)
         self.vectorstore.save_local(self.index_path)
         logger.info(f"[RAG] 索引构建完成并保存至: {self.index_path} (共 {len(documents)} 块)")
 
-    def retrieve(self, query: str, k: int = 3, rerank: bool = true) -> List[str]:
+    def retrieve(self, query: str, k: int = 3, rerank: bool = True) -> List[str]:
+        print(f"[RAG] 收到查询: '{query}'，参数 - k: {k}, rerank: {rerank}")
         if not rerank:
             """执行相似度检索"""
             if not self.is_ready():
@@ -163,10 +170,11 @@ class YuYuanRAG:
                 docs = self.vectorstore.similarity_search(query, k=k)
                 return [doc.page_content for doc in docs]
 
-    def retrieve_with_score(self, query: str, k: int = 3, threshold: float = 0.6, rerank: bool = true) -> List[Tuple[str, float]]:
+    def retrieve_with_score(self, query: str, k: int = 3, threshold: float = None, rerank: bool = true) -> List[Tuple[str, float]]:
         if not self.is_ready():
             return []
 
+        threshold = threshold if threshold is not None else config.RAG_SCORE_THRESHOLD
         if not rerank:
             """带分数过滤的精细检索"""
             try:
@@ -178,6 +186,7 @@ class YuYuanRAG:
                 for doc, score in docs_and_scores:
                     # 距离转相似度的经验公式
                     similarity = 1 / (1 + score)
+                    print(score, similarity)
                     if similarity >= threshold:
                         results.append((doc.page_content, float(similarity)))
                 return results
@@ -187,9 +196,16 @@ class YuYuanRAG:
         else:
             try:
                 compressed_docs = self.compression_retriver.invoke(query)
+                print(compressed_docs)
                 print(f"[RAG] 重排序后返回 {len(compressed_docs)} 条结果，第 0 条: {compressed_docs[0].page_content[:100]}...")
-                # 这里我们没有直接的分数输出，因为 FlashrankRerank 只返回重排序后的文档列表，没有暴露分数接口
-                return [(doc.page_content, 1.0) for doc in compressed_docs[:k]]  # 2026年版本调整：重排序结果默认相似度为 1.0，实际应用中可以根据需要调整为其他值
+                # 筛选分数过低的
+                results = []
+                for doc in compressed_docs:
+                    score = doc.metadata.get("relevance_score", 0.0)
+                    print(score)
+                    if score >= threshold:
+                        results.append((doc.page_content, float(score)))
+                return results[:k] # 2026年版本调整：重排序结果默认相似度为 1.0，实际应用中可以根据需要调整为其他值
             except Exception as e:
                 logger.error(f"[RAG] 检索或重排序出错: {e}")
                 # 降级处理：如果 Reranker 出错，退回到基础的 FAISS 检索
