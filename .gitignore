@@ -200,11 +200,12 @@ calibration_*.npy
 *.ico
 *.raw
 
-# Training logs
-args.yaml
-results.csv
+# Cache
 /cache/
 cache/
 
-# Test files
-torchtest.py
+# Local data
+/data/
+data/
+
+# Videos and Pictures
