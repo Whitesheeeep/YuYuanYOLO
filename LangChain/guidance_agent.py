@@ -15,8 +15,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from sympy import false
+from langchain_core.messages import HumanMessage, AIMessage
 
 # 假设你的项目结构中包含这些
 from . import config
@@ -63,6 +62,8 @@ class YuYuanGuidanceAgent:
 
         # 5. 内存记忆存储 (Session 字典)
         self.session_store = {}
+        # Agent 侧历史长度（与 monitor 展示历史独立）
+        self.agent_history_limit = 10
 
         # 6. 构建带记忆的完整链条
         # 链路：数据输入 -> Prompt -> LLM -> 字符串解析
@@ -82,15 +83,16 @@ class YuYuanGuidanceAgent:
         return "你是豫园的专业导游，请为听障人士提供简洁、具象的视觉导览。优先参考背景资料。"
 
     #======================对话历史管理============================
-    def _get_session_history(self, session_id: str):
+    def _get_session_history(self, session_id: str) -> InMemoryChatMessageHistory:
         """获取或创建会话历史，并限制记忆长度"""
         if session_id not in self.session_store:
             self.session_store[session_id] = InMemoryChatMessageHistory()
 
-        # 限制记忆：只保留最近 10 条消息（约 5 轮对话），防止 Token 溢出
+        # 限制记忆：只保留最近 N 条消息（约 N/2 轮对话），防止 Token 溢出
         h = self.session_store[session_id]
-        if len(h.messages) > 10:
-            h.messages = h.messages[-10:]
+        history_limit = max(1, int(getattr(self, "agent_history_limit", 10)))
+        if len(h.messages) > history_limit:
+            h.messages = h.messages[-history_limit:]
         return h
 
     def clear_session_history(self, session_id: str):

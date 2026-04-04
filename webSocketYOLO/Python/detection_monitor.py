@@ -27,13 +27,22 @@ import base64
 import cv2
 import numpy as np
 import hashlib
+from pathlib import Path
 from ultralytics import YOLO
 import threading
 import socket
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout,
-                             QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QSplitter, QSizePolicy)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject
+                             QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QSplitter, QSizePolicy,
+                             QTextEdit, QSpinBox)
+from PyQt5.QtCore import Qt, pyqtSignal, QObject
 from PyQt5.QtGui import QPixmap, QImage, QColor, QFont
+
+# 允许从项目根目录导入 LangChain 模块
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from LangChain.guidance_agent import YuYuanGuidanceAgent
 
 # ============================================================================
 # 全局配置和初始化
@@ -67,16 +76,38 @@ def get_local_ip():
         return "127.0.0.1"
 
 # 加载 YOLO 模型（程序启动时加载一次，所有检测共享同一个模型实例）
-model = YOLO(r'E:\Master\ultralytics-main\runs\detect\runs\train\yuyuan_exp\weights\best.pt')
+model = YOLO(r'D:\Yuyuan_2\YuyuanYOLO\runs\detect\runs\train\yuyuan_exp\weights\best.pt')
 
 # WebSocket 服务器配置
 ip = "0.0.0.0"  # 监听所有网络接口（允许局域网内的设备连接）
 port = 5000     # 服务器端口
 local_ip = get_local_ip()  # 获取本机局域网 IP
 
+# 历史保留策略：Agent 与 Monitor 分离
+AGENT_HISTORY_LIMIT = 10
+MONITOR_HISTORY_LIMIT_DEFAULT = 20
+
 # 存储所有连接的 WebSocket 客户端（Unity 设备）
 # 使用字典存储：{device_id: ClientSession}
 clients = {}
+
+_guidance_agent = None
+
+
+def get_guidance_agent():
+    """延迟初始化导览 Agent，避免启动阶段失败影响检测服务。"""
+    global _guidance_agent
+    if _guidance_agent is not None:
+        return _guidance_agent
+
+    try:
+        _guidance_agent = YuYuanGuidanceAgent()
+        _guidance_agent.agent_history_limit = AGENT_HISTORY_LIMIT
+        print(f"[Agent] 导览 Agent 初始化成功，history_limit={AGENT_HISTORY_LIMIT}")
+    except Exception as e:
+        _guidance_agent = None
+        print(f"[Agent Error] 初始化失败: {e}")
+    return _guidance_agent
 
 # 用户可配置的类别颜色（OpenCV BGR 格式）
 # 示例：USER_CLASS_COLORS = {"Stone1": (0, 255, 0), "Stone2": (255, 0, 0)}
@@ -141,6 +172,9 @@ class ClientSession:
         self.websocket = websocket
         self.remote_address = remote_address  # (ip, port) 元组
         self.connected_at = asyncio.get_event_loop().time()
+        self.last_original_image = None
+        self.chat_history = []
+        self.guidance_tasks = set()
 
     @property
     def ip(self):
@@ -173,6 +207,7 @@ class SignalEmitter(QObject):
     - 通过信号槽机制，后台线程发射信号，主线程接收并更新界面
     """
     detection_result = pyqtSignal(dict, str)  # 检测结果信号 (response_dict, connection_id)
+    guidance_result = pyqtSignal(dict, str)   # 导览结果信号 (response_dict, connection_id)
     client_connected = pyqtSignal(str, str, str, str, int)  # 客户端连接信号 (connection_id, device_id, device_name, ip, port)
     client_disconnected = pyqtSignal(str)  # 客户端断开信号 (connection_id)
 
@@ -249,6 +284,54 @@ def apply_nms(boxes, scores, iou_threshold=0.5):
 
     return keep
 
+
+def make_temp_device_id(connection_id: str) -> str:
+    safe = connection_id.replace(":", "_")
+    return f"temp_device_{safe}"
+
+
+def make_session_id(connection_id: str, device_id: str) -> str:
+    return f"{connection_id}_{device_id}"
+
+
+async def generate_guidance_answer(query: str, session_id: str, image_base64: str) -> str:
+    agent = get_guidance_agent()
+    if agent is None:
+        return "导览助手暂时不可用，请稍后再试。"
+
+    return await agent.generate_guidance_with_image(
+        user_query=query,
+        session_id=session_id,
+        image_base64=image_base64,
+    )
+
+
+async def process_guidance_request(connection_id: str, device_id: str, device_name: str, query: str, image_base64: str):
+    """后台处理导览请求，完成后按 connection_id 精确回发，避免阻塞收包循环。"""
+    try:
+        session_id = make_session_id(connection_id, device_id)
+        answer = await generate_guidance_answer(query, session_id, image_base64)
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        answer = f"导览请求处理失败: {e}"
+
+    response = {
+        'type': 'guidance_result',
+        'device_id': device_id,
+        'device_name': device_name,
+        'query': query,
+        'answer': answer,
+    }
+
+    session = clients.get(connection_id)
+    if session is not None:
+        session.chat_history.append({'role': 'user', 'content': query})
+        session.chat_history.append({'role': 'assistant', 'content': answer})
+
+    signal_emitter.guidance_result.emit(response, connection_id)
+    await send_to_client(connection_id, json.dumps(response, ensure_ascii=False))
+
 # ============================================================================
 # WebSocket 服务器核心逻辑
 # ============================================================================
@@ -300,37 +383,43 @@ async def handle_client(websocket):
     current_connection_id = None
 
     try:
+        def ensure_session(device_id: str, device_name: str) -> ClientSession:
+            nonlocal current_connection_id
+            if connection_id not in clients:
+                session_obj = ClientSession(connection_id, device_id, device_name, websocket, remote_address)
+                clients[connection_id] = session_obj
+                current_connection_id = connection_id
+                print(f"[注册] 新设备: {session_obj}")
+                print(f"当前连接设备数: {len(clients)}")
+                signal_emitter.client_connected.emit(connection_id, device_id, device_name, session_obj.ip, session_obj.port)
+                return session_obj
+
+            session_obj = clients[connection_id]
+            session_obj.websocket = websocket
+            session_obj.remote_address = remote_address
+            session_obj.device_id = device_id
+            session_obj.device_name = device_name
+            current_connection_id = connection_id
+            return session_obj
+
         # 持续监听客户端消息（异步迭代器）
         async for message in websocket:
             # 解析 JSON 消息
             data = json.loads(message)
+            message_type = data.get('type')
+
+            # 客户端 device_id 为空时，使用服务端临时 ID
+            incoming_device_id = data.get('device_id') or make_temp_device_id(connection_id)
+            incoming_device_name = data.get('device_name') or incoming_device_id
 
             # 处理检测请求
-            if data['type'] == 'detect':
-                device_id = data['device_id']
-                device_name = data['device_name']
+            if message_type == 'detect':
+                device_id = incoming_device_id
+                device_name = incoming_device_name
 
                 # ========== 步骤 0: 注册或更新客户端会话 ==========
                 # 注意：即使两个客户端的 device_id 相同，只要 connection_id 不同，就视为不同会话
-                if connection_id not in clients:
-                    # 新连接，创建会话
-                    session = ClientSession(connection_id, device_id, device_name, websocket, remote_address)
-                    clients[connection_id] = session
-                    current_connection_id = connection_id
-                    print(f"[注册] 新设备: {session}")
-                    print(f"当前连接设备数: {len(clients)}")
-
-                    # 发送客户端连接信号到监控界面（携带 connection_id）
-                    signal_emitter.client_connected.emit(connection_id, device_id, device_name, session.ip, session.port)
-                else:
-                    # 已存在的连接（同一 IP:Port 重连），更新 WebSocket 引用
-                    session = clients[connection_id]
-                    session.websocket = websocket
-                    session.remote_address = remote_address
-                    # device_id / device_name 也允许更新
-                    session.device_id = device_id
-                    session.device_name = device_name
-                    current_connection_id = connection_id
+                session = ensure_session(device_id, device_name)
 
                 # ========== 步骤 1: 解码图像 ==========
                 # 将 base64 编码的图像数据解码为二进制
@@ -343,7 +432,7 @@ async def handle_client(websocket):
                 # ========== 步骤 2: YOLO 检测 ==========
                 # 调用 YOLO 模型进行目标检测
                 # results 包含检测到的所有目标信息（边界框、类别、置信度等）
-                results = model(img)
+                results = model(img, verbose=False)
 
                 # ========== 步骤 3: 收集所有检测框并应用 NMS ==========
                 # 先收集所有检测框的信息
@@ -425,6 +514,9 @@ async def handle_client(websocket):
                     'detections': detections                # 检测结果列表
                 }
 
+                # 缓存该设备当前画面，后续 guidance_request 直接复用
+                session.last_original_image = original_base64
+
                 # ========== 步骤 7: 发送结果 ==========
                 # 6.1 通过 Qt 信号发送到监控界面（携带 connection_id 以便精确路由）
                 signal_emitter.detection_result.emit(response, connection_id)
@@ -435,6 +527,62 @@ async def handle_client(websocket):
 
                 if len(detections) > 0:
                     print(f"[检测] 设备 {device_name} ({session.ip}:{session.port}) - 检测到 {len(detections)} 个目标 (NMS 过滤后)")
+
+            elif message_type == 'guidance_request':
+                device_id = incoming_device_id
+                device_name = incoming_device_name
+                session = ensure_session(device_id, device_name)
+
+                query = (data.get('query') or data.get('message') or data.get('user_query') or '').strip()
+                if not query:
+                    response = {
+                        'type': 'guidance_result',
+                        'device_id': session.device_id,
+                        'device_name': session.device_name,
+                        'query': '',
+                        'answer': '请先输入导览问题。',
+                    }
+                    signal_emitter.guidance_result.emit(response, connection_id)
+                    await send_to_client(connection_id, json.dumps(response, ensure_ascii=False))
+                    continue
+
+                # guidance 图像改为由客户端随请求发送，支持常见字段名与 data URI
+                request_image_base64 = (
+                    data.get('image_base64')
+                    or data.get('image')
+                    or data.get('original_image')
+                    or ''
+                ).strip()
+                if request_image_base64.startswith('data:') and ',' in request_image_base64:
+                    request_image_base64 = request_image_base64.split(',', 1)[1].strip()
+
+                if not request_image_base64:
+                    response = {
+                        'type': 'guidance_result',
+                        'device_id': session.device_id,
+                        'device_name': session.device_name,
+                        'query': query,
+                        'answer': '请在 guidance_request 中传入图片 base64（image_base64 或 image 字段）。',
+                    }
+                    signal_emitter.guidance_result.emit(response, connection_id)
+                    await send_to_client(connection_id, json.dumps(response, ensure_ascii=False))
+                    continue
+
+                # 异步后台处理，避免阻塞当前 WebSocket 收包循环
+                task = asyncio.create_task(
+                    process_guidance_request(
+                        connection_id=connection_id,
+                        device_id=session.device_id,
+                        device_name=session.device_name,
+                        query=query,
+                        image_base64=request_image_base64,
+                    )
+                )
+                session.guidance_tasks.add(task)
+                task.add_done_callback(lambda t, s=session: s.guidance_tasks.discard(t))
+
+            else:
+                print(f"[警告] 未知消息类型: {message_type}")
 
     except websockets.exceptions.ConnectionClosed:
         # 客户端正常断开连接
@@ -448,6 +596,11 @@ async def handle_client(websocket):
             removed_session = clients.pop(current_connection_id)
             print(f"[移除] 设备: {removed_session}")
             print(f"当前连接设备数: {len(clients)}")
+
+            # 取消该连接仍在进行中的导览任务，避免断连后继续回发
+            for task in list(removed_session.guidance_tasks):
+                task.cancel()
+            removed_session.guidance_tasks.clear()
 
             # 发送客户端断开信号到监控界面
             signal_emitter.client_disconnected.emit(current_connection_id)
@@ -571,6 +724,9 @@ class MonitorWindow(QMainWindow):
         self.devices = {}
         # 当前选中的 connection_id
         self.current_connection_id = None
+        # monitor 展示历史（与 Agent 会话历史分离）
+        self.monitor_history = {}
+        self.monitor_history_limit = MONITOR_HISTORY_LIMIT_DEFAULT
 
         # 初始化界面
         self.setup_ui()
@@ -620,6 +776,18 @@ class MonitorWindow(QMainWindow):
         self.server_info_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         video_layout.addWidget(self.server_info_label)
 
+        # 对话历史保留条数控制（monitor 侧）
+        history_control_layout = QHBoxLayout()
+        history_label = QLabel('历史保留轮数:')
+        self.history_limit_spin = QSpinBox()
+        self.history_limit_spin.setRange(1, 200)
+        self.history_limit_spin.setValue(self.monitor_history_limit)
+        self.history_limit_spin.valueChanged.connect(self.on_history_limit_changed)
+        history_control_layout.addWidget(history_label)
+        history_control_layout.addWidget(self.history_limit_spin)
+        history_control_layout.addStretch(1)
+        video_layout.addLayout(history_control_layout)
+
         # 双窗口显示（水平分割）
         video_splitter = QSplitter(Qt.Horizontal)
 
@@ -638,6 +806,13 @@ class MonitorWindow(QMainWindow):
         video_splitter.addWidget(self.label_detected)
 
         video_layout.addWidget(video_splitter)
+
+        # 当前设备对话历史
+        self.chat_history_view = QTextEdit()
+        self.chat_history_view.setReadOnly(True)
+        self.chat_history_view.setPlaceholderText('当前设备对话历史将显示在这里...')
+        video_layout.addWidget(self.chat_history_view)
+
         splitter.addWidget(video_widget)
 
         # 设置分割器比例：设备列表占 1 份，视频显示占 4 份
@@ -654,6 +829,7 @@ class MonitorWindow(QMainWindow):
         # 当 WebSocket 线程发射信号时，会自动调用对应的方法
         # Qt 的信号槽机制会自动处理线程切换，确保界面更新在主线程中执行
         signal_emitter.detection_result.connect(self.on_message_received)
+        signal_emitter.guidance_result.connect(self.on_guidance_received)
         signal_emitter.client_connected.connect(self.on_client_connected)
         signal_emitter.client_disconnected.connect(self.on_client_disconnected)
 
@@ -680,6 +856,8 @@ class MonitorWindow(QMainWindow):
             'ip': ip,
             'port': port
         }
+        if connection_id not in self.monitor_history:
+            self.monitor_history[connection_id] = []
 
         # 在设备列表中添加新项，显示设备名称和 connection_id
         # 注意：相同 device_id 的不同连接会用 connection_id（IP:Port）区分
@@ -712,6 +890,7 @@ class MonitorWindow(QMainWindow):
         if connection_id in self.devices:
             device_info = self.devices.pop(connection_id)
             print(f"[界面] 移除设备: {device_info['name']} [{device_info['device_id']}] @ {connection_id}")
+        self.monitor_history.pop(connection_id, None)
 
         # 从列表控件中移除
         for i in range(self.device_list.count()):
@@ -727,6 +906,7 @@ class MonitorWindow(QMainWindow):
             self.label_original.setText('原始视频流')
             self.label_detected.clear()
             self.label_detected.setText('检测后视频流')
+            self.chat_history_view.clear()
 
             # 如果还有其他设备，自动选择第一个
             if self.device_list.count() > 0:
@@ -758,9 +938,48 @@ class MonitorWindow(QMainWindow):
         if data['type'] == 'detection_result':
             # 按 connection_id 比对（而非 device_id），确保相同 device_id 的不同连接独立显示
             if connection_id == self.current_connection_id:
-                self.update_display(data)
+                self.update_display(data, connection_id)
 
-    def update_display(self, data):
+    def on_guidance_received(self, data, connection_id):
+        """接收导览结果并更新当前设备历史展示。"""
+        if data.get('type') != 'guidance_result':
+            return
+
+        query = data.get('query', '').strip()
+        answer = data.get('answer', '').strip()
+
+        if query:
+            self.append_and_trim_history(connection_id, f"[User] {query}")
+        if answer:
+            self.append_and_trim_history(connection_id, f"[AI] {answer}")
+
+        if connection_id == self.current_connection_id:
+            self.refresh_history_display()
+
+    def append_and_trim_history(self, connection_id, line):
+        history = self.monitor_history.setdefault(connection_id, [])
+        history.append(line)
+        max_lines = max(2, self.monitor_history_limit * 2)
+        if len(history) > max_lines:
+            del history[:-max_lines]
+
+    def refresh_history_display(self):
+        if not self.current_connection_id:
+            self.chat_history_view.clear()
+            return
+        lines = self.monitor_history.get(self.current_connection_id, [])
+        self.chat_history_view.setPlainText("\n".join(lines))
+
+    def on_history_limit_changed(self, value):
+        self.monitor_history_limit = max(1, int(value))
+        # 调整当前缓存，避免历史无限增长
+        max_lines = max(2, self.monitor_history_limit * 2)
+        for connection_id, lines in self.monitor_history.items():
+            if len(lines) > max_lines:
+                self.monitor_history[connection_id] = lines[-max_lines:]
+        self.refresh_history_display()
+
+    def update_display(self, data, connection_id):
         """
         更新视频显示
 
@@ -782,7 +1001,7 @@ class MonitorWindow(QMainWindow):
 
         # 更新状态栏：显示设备名称、IP:端口 和检测到的目标数量
         num_detections = len(data['detections'])
-        device_info = self.devices.get(data['device_id'], {})
+        device_info = self.devices.get(connection_id, {})
         device_name = device_info.get('name', data['device_name'])
         device_ip = device_info.get('ip', 'unknown')
         device_port = device_info.get('port', 0)
@@ -859,6 +1078,7 @@ class MonitorWindow(QMainWindow):
         """
         # 从 item 中获取存储的 connection_id
         self.current_connection_id = item.data(Qt.UserRole)
+        self.refresh_history_display()
 
     def closeEvent(self, event):
         """
@@ -917,6 +1137,8 @@ def main():
     window = MonitorWindow()
     # 显示窗口
     window.show()
+    # 直接初始化
+    get_guidance_agent()
     # 进入 Qt 事件循环（阻塞，直到窗口关闭）
     sys.exit(app.exec_())
 
