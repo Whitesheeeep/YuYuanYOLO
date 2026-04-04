@@ -204,3 +204,7 @@ calibration_*.npy
 args.yaml
 results.csv
 /cache/
+cache/
+
+# Test files
+torchtest.py
