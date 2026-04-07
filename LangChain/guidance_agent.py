@@ -4,6 +4,7 @@ import base64
 import time
 from typing import Optional
 
+from langchain_classic.agents import AgentExecutor
 from langchain_community.callbacks import get_openai_callback
 from langchain_core.runnables import RunnableConfig
 from pydantic import SecretStr
@@ -112,6 +113,7 @@ class YuYuanGuidanceAgent:
         if not query:
             return "（未收到有效输入）"
         results = self.rag.retrieve_with_score(query, k=self.rerank_top_k, rerank=self.rerank)
+        print(results)
         if not results:
             return "暂无相关景点历史记录。"
         return "\n".join([f"- {r}" for r in results])
@@ -250,7 +252,7 @@ class YuYuanGuidanceAgent:
                 answer = output
             else:
                 answer = str(output)
-
+            print(f"[LLM] 回答：{answer[:20]}...")  # 只打印前 60 字，避免泄露敏感信息
             # 去除对话历史中的图像存储
             self._summarize_image_in_history(session_id, effective_query)
 
