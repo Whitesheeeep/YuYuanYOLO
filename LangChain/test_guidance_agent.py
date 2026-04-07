@@ -1,406 +1,445 @@
+"""
+单元测试：YuYuanGuidanceAgent
+================================
+策略：绕过真实 __init__（避免初始化 LLM/RAG），
+通过 object.__new__ + 手动赋属性来测试各个方法。
+需要真实 agent 执行的测试使用轻量 DummyAgent mock。
+"""
 import pytest
 import os
 import io
 import base64
 from PIL import Image
-from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.messages import HumanMessage, AIMessage
 
-from LangChain.guidance_agent import YuYuanGuidanceAgent
+from LangChain.guidance_agent import YuYuanGuidanceAgent, YuYuanAgentState, _apply_nms
 
 
-# ==================== Dummy 组件 ====================
+# ============================================================================
+# 审查输出辅助
+# ============================================================================
+
+def _section(title: str):
+    print(f"\n{'─' * 60}")
+    print(f"  {title}")
+    print(f"{'─' * 60}")
+
+def _show(label: str, value):
+    val_str = str(value)
+    if len(val_str) > 120:
+        val_str = val_str[:120] + "..."
+    print(f"  {label:<28} {val_str}")
+
+
+# ============================================================================
+# 公共 Dummy 组件
+# ============================================================================
 
 class DummyRAG:
-    def retrieve(self, query, k=3, rerank=False):
+    def retrieve_with_score(self, query, k=3, rerank=False):
+        if not query:
+            return []
         if query == "empty":
             return []
-        return ["九曲桥始建于明代", "桥体蜿蜒以延缓水流"]
+        return [("九曲桥始建于明代", 0.95), ("桥体蜿蜒以延缓水流", 0.88)]
 
 
-class DummyChainSuccess:
+class DummyAgent:
+    """模拟 create_agent 返回的 agent 对象，用于测试 generate_guidance* 接口。"""
+    def __init__(self, response="导览建议：从九曲桥入口开始参观。", raise_error=False):
+        self._response = response
+        self._raise_error = raise_error
+        self._last_input = None
+
     async def ainvoke(self, payload, config=None):
-        assert "context" in payload
-        assert "input" in payload
-        assert "configurable" in config
-        return "导览建议：从九曲桥入口开始参观。"
+        if self._raise_error:
+            raise RuntimeError("mock llm failure")
+        self._last_input = payload
+        return {"messages": [AIMessage(content=self._response)]}
+
+    def get_state(self, config):
+        return None
 
 
-class DummyChainFail:
-    async def ainvoke(self, payload, config=None):
-        raise RuntimeError("mock llm failure")
+class DummyCheckpointer:
+    def __init__(self):
+        self.storage = {"session_a": "data_a", "other": "data_b"}
 
+
+# ============================================================================
+# Fixtures
+# ============================================================================
 
 @pytest.fixture
-def agent(monkeypatch):
-    # 避免触发真实 __init__（会初始化 ChatOpenAI）
+def agent():
+    """创建最小化 agent 实例，跳过真实 __init__。"""
     a = object.__new__(YuYuanGuidanceAgent)
     a.rag = DummyRAG()
-    a.rerank = False
-    a.rerank_top_k = 2
-    a.session_store = {}
+    a._yolo_model = None
+    a.agent_history_limit = 10
+    a.agent = DummyAgent()
+    a._checkpointer = DummyCheckpointer()
     return a
 
 
-# ==================== 原有逻辑测试 ====================
+# ============================================================================
+# _apply_nms 测试
+# ============================================================================
 
-def test_rag_retrieve_wrapper_with_results(agent):
-    out = agent._rag_retrieve_wrapper("九曲桥")
-    assert "- 九曲桥始建于明代" in out
-    assert "- 桥体蜿蜒以延缓水流" in out
-
-
-def test_rag_retrieve_wrapper_empty_query(agent):
-    assert agent._rag_retrieve_wrapper("") == "（未收到有效输入）"
-
-
-def test_rag_retrieve_wrapper_no_results(agent):
-    assert agent._rag_retrieve_wrapper("empty") == "暂无相关景点历史记录。"
+def test_apply_nms_empty():
+    _section("NMS | 空输入")
+    result = _apply_nms([], [])
+    _show("输入 boxes/scores", "[] / []")
+    _show("输出 keep 列表", result)
+    assert result == []
+    print("  ✓ 空输入返回空列表")
 
 
-def test_get_session_history_create_and_trim(agent):
-    """测试会话历史创建和裁剪到最近10条消息"""
-    sid = "s1"
-    h = agent._get_session_history(sid)
-    assert isinstance(h, InMemoryChatMessageHistory)
-    assert sid in agent.session_store
-
-    # 添加12条消息，应该只保留最后10条
-    for i in range(12):
-        h.add_user_message(f"u{i}")
-    h2 = agent._get_session_history(sid)
-    assert len(h2.messages) == 10, "应该只保留最近10条消息"
-    assert h2.messages[0].content == "u2", "第一条应该是u2（u0和u1被裁剪）"
-    assert h2.messages[-1].content == "u11", "最后一条应该是u11"
+def test_apply_nms_single():
+    _section("NMS | 单框")
+    boxes = [[0, 0, 10, 10]]
+    scores = [0.9]
+    result = _apply_nms(boxes, scores)
+    _show("输入 boxes", boxes)
+    _show("输入 scores", scores)
+    _show("输出 keep 列表", result)
+    assert result == [0]
+    print("  ✓ 单框直接保留，索引为 0")
 
 
-def test_get_session_history_trim_boundary(agent):
-    """测试边界情况：刚好10条时不裁剪，超过10条时才裁剪"""
-    sid = "s_boundary"
-    h = agent._get_session_history(sid)
-
-    # 刚好10条，不应该裁剪
-    for i in range(10):
-        h.add_user_message(f"msg{i}")
-    h2 = agent._get_session_history(sid)
-    assert len(h2.messages) == 10, "刚好10条时不应裁剪"
-    assert h2.messages[0].content == "msg0"
-
-    # 添加第11条，应该触发裁剪，保留msg1-msg11（删除msg0）
-    h.add_user_message("msg11")
-    h3 = agent._get_session_history(sid)
-    assert len(h3.messages) == 10, "超过10条后应裁剪到10条"
-    assert h3.messages[0].content == "msg1", "msg0应被裁剪"
-    assert h3.messages[-1].content == "msg11"
+def test_apply_nms_suppresses_overlap():
+    _section("NMS | 高重叠框抑制")
+    boxes = [[0, 0, 10, 10], [1, 1, 11, 11]]
+    scores = [0.9, 0.8]
+    keep = _apply_nms(boxes, scores, iou_threshold=0.5)
+    _show("输入 boxes", boxes)
+    _show("输入 scores", scores)
+    _show("iou_threshold", 0.5)
+    _show("输出 keep 列表", keep)
+    assert 0 in keep
+    assert 1 not in keep
+    print("  ✓ 高 IoU 时低分框（索引 1）被抑制，高分框（索引 0）保留")
 
 
-def test_clear_and_delete_session_history(agent):
-    sid = "s2"
-    h = agent._get_session_history(sid)
-    h.add_user_message("hello")
-    assert len(agent.session_store[sid].messages) == 1
+def test_apply_nms_keeps_non_overlap():
+    _section("NMS | 无重叠框全部保留")
+    boxes = [[0, 0, 10, 10], [20, 20, 30, 30]]
+    scores = [0.9, 0.8]
+    keep = _apply_nms(boxes, scores, iou_threshold=0.5)
+    _show("输入 boxes", boxes)
+    _show("输入 scores", scores)
+    _show("输出 keep 列表", keep)
+    assert set(keep) == {0, 1}
+    print("  ✓ 两框不重叠，全部保留")
 
-    agent.clear_session_history(sid)
-    assert len(agent.session_store[sid].messages) == 0
 
-    agent.delete_session_history(sid)
-    assert sid not in agent.session_store
+# ============================================================================
+# 图像辅助方法测试
+# ============================================================================
 
+def test_image_file_to_base64_compresses_large_image(tmp_path):
+    _section("图像编码 | 大图压缩 + base64 编码")
+    img_path = tmp_path / "test.jpg"
+    Image.new("RGB", (2000, 2000), color="red").save(img_path)
+    a = object.__new__(YuYuanGuidanceAgent)
+
+    encoded = a._image_file_to_base64(str(img_path))
+    decoded = base64.b64decode(encoded)
+
+    _show("原始尺寸", "2000×2000 px")
+    _show("max_side 限制", 1024)
+    _show("编码后长度 (字符)", len(encoded))
+    _show("解码头 2 字节 (hex)", decoded[:2].hex())
+    _show("JPEG magic bytes", "ffd8")
+
+    assert isinstance(encoded, str) and len(encoded) > 0
+    assert decoded[:2] == b"\xff\xd8"
+    print("  ✓ 输出为合法 JPEG base64 字符串")
+
+
+def test_image_file_to_base64_not_found():
+    _section("图像编码 | 路径不存在抛出异常")
+    path = "/nonexistent/path.jpg"
+    _show("输入路径", path)
+    a = object.__new__(YuYuanGuidanceAgent)
+    with pytest.raises(FileNotFoundError) as exc_info:
+        a._image_file_to_base64(path)
+    _show("捕获异常类型", type(exc_info.value).__name__)
+    _show("异常消息", str(exc_info.value))
+    print("  ✓ 正确抛出 FileNotFoundError")
+
+
+def test_normalize_base64_pure():
+    _section("Base64 标准化 | 纯 base64 原样返回")
+    b64 = "SGVsbG8gV29ybGQ="
+    a = object.__new__(YuYuanGuidanceAgent)
+    result = a._normalize_base64(b64)
+    _show("输入", b64)
+    _show("输出", result)
+    assert result == b64
+    print("  ✓ 纯 base64 不被修改")
+
+
+def test_normalize_base64_data_uri():
+    _section("Base64 标准化 | data URI 前缀去除")
+    data_uri = "data:image/jpeg;base64,SGVsbG8gV29ybGQ="
+    a = object.__new__(YuYuanGuidanceAgent)
+    result = a._normalize_base64(data_uri)
+    _show("输入", data_uri)
+    _show("输出 (去掉前缀后)", result)
+    assert result == "SGVsbG8gV29ybGQ="
+    print("  ✓ data: 前缀成功去除，只保留 payload")
+
+
+def test_normalize_base64_empty():
+    _section("Base64 标准化 | 空/None 输入返回空字符串")
+    a = object.__new__(YuYuanGuidanceAgent)
+    r1 = a._normalize_base64("")
+    r2 = a._normalize_base64(None)
+    _show("输入 ''  → 输出", repr(r1))
+    _show("输入 None → 输出", repr(r2))
+    assert r1 == ""
+    assert r2 == ""
+    print("  ✓ 空值均返回 ''")
+
+
+# ============================================================================
+# 会话管理测试
+# ============================================================================
+
+def test_clear_session_history_removes_matching_keys(agent):
+    _section("会话管理 | clear_session_history 按 thread_id 清除")
+    storage_before = {
+        ("session_a", "ns", "ckpt1"): "x",
+        ("session_a", "ns", "ckpt2"): "y",
+        ("other_session", "ns", "ckpt1"): "z",
+    }
+    agent._checkpointer.storage = dict(storage_before)
+    _show("清除前 key 数量", len(agent._checkpointer.storage))
+    _show("目标 thread_id", "session_a")
+
+    agent.clear_session_history("session_a")
+
+    remaining = list(agent._checkpointer.storage.keys())
+    _show("清除后 key 数量", len(remaining))
+    _show("剩余 key", remaining)
+
+    assert ("other_session", "ns", "ckpt1") in remaining
+    assert not any(k[0] == "session_a" for k in remaining)
+    print("  ✓ session_a 的 2 条记录已删除，other_session 不受影响")
+
+
+def test_delete_session_history_delegates_to_clear(agent, monkeypatch):
+    _section("会话管理 | delete_session_history 委托给 clear")
+    called = []
+    monkeypatch.setattr(agent, "clear_session_history", lambda sid: called.append(sid))
+    agent.delete_session_history("sess_x")
+    _show("delete 调用 session_id", "sess_x")
+    _show("clear 收到的 session_id 列表", called)
+    assert called == ["sess_x"]
+    print("  ✓ delete_session_history 正确转发给 clear_session_history")
+
+
+# ============================================================================
+# generate_guidance 接口测试
+# ============================================================================
 
 @pytest.mark.asyncio
 async def test_generate_guidance_success(agent):
-    agent.chain_with_history = DummyChainSuccess()
-    ans = await agent.generate_guidance("九曲桥为什么是弯的？", session_id="tourist_A")
+    _section("generate_guidance | 正常返回导览建议")
+    query = "九曲桥为什么是弯的？"
+    session = "tourist_A"
+    _show("输入 query", query)
+    _show("session_id", session)
+
+    ans = await agent.generate_guidance(query, session_id=session)
+
+    _show("Agent 返回", ans)
     assert "导览建议" in ans
+    print("  ✓ 返回包含'导览建议'关键词")
+
+
+@pytest.mark.asyncio
+async def test_generate_guidance_passes_text_only(agent):
+    _section("generate_guidance | 消息仅含纯文字，无图像字段")
+    query = "三穗堂介绍"
+    _show("输入 query", query)
+
+    await agent.generate_guidance(query, session_id="tourist_B")
+    last_input = agent.agent._last_input
+
+    msg = last_input["messages"][0]
+    _show("payload keys", list(last_input.keys()))
+    _show("消息类型", type(msg).__name__)
+    _show("消息 content 类型", type(msg.content).__name__)
+    _show("content 值 (前 80 字)", str(msg.content)[:80])
+    _show("包含 'current_image_base64'", "current_image_base64" in last_input)
+    _show("包含 'image_url'", "image_url" in str(msg.content))
+
+    assert "messages" in last_input
+    assert "current_image_base64" not in last_input
+    assert isinstance(msg, HumanMessage)
+    assert isinstance(msg.content, str)
+    assert "image_url" not in str(msg.content)
+    print("  ✓ 纯文本查询：消息内容为 str，payload 不含图像字段")
 
 
 @pytest.mark.asyncio
 async def test_generate_guidance_fail_returns_fallback(agent):
-    agent.chain_with_history = DummyChainFail()
-    ans = await agent.generate_guidance("九曲桥为什么是弯的？", session_id="tourist_A")
+    _section("generate_guidance | LLM 异常时返回兜底文案")
+    agent.agent = DummyAgent(raise_error=True)
+    _show("mock 行为", "ainvoke 抛出 RuntimeError")
+
+    ans = await agent.generate_guidance("九曲桥", session_id="tourist_A")
+
+    _show("实际返回", ans)
     assert ans == "导览助手暂时无法连接，请稍后再试。"
+    print("  ✓ 异常被捕获，返回兜底文案")
 
 
-# ==================== 图像历史记录清理测试 ====================
-
-def test_summarize_image_in_history_replaces_image_with_text(agent):
-    """测试带图消息被替换为纯文本描述"""
-    from langchain_core.messages import HumanMessage, AIMessage
-
-    session_id = "img_session_01"
-    history = agent._get_session_history(session_id)
-
-    # 构造带图的多模态消息
-    image_content = [
-        {"type": "text", "text": "这张图片是什么景点？"},
-        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQSkZJRg=="}}
-    ]
-
-    history.add_user_message(HumanMessage(content=image_content))
-    history.add_ai_message(AIMessage(content="这是九曲桥的著名景点。"))
-
-    # 调用图像摘要方法
-    agent._summarize_image_in_history(session_id, "这张图片是什么景点？")
-
-    # 验证历史记录中的图像消息已被替换为纯文本
-    user_msg = history.messages[0]
-    assert isinstance(user_msg, HumanMessage)
-    assert isinstance(user_msg.content, str), "内容应已变为字符串，不再是列表"
-    assert "[已处理图像请求]" in user_msg.content, "应包含图像处理标记"
-    assert "这张图片是什么景点？" in user_msg.content
-    # 验证不再包含 image_url 数据
-    assert "image_url" not in str(user_msg.content)
-
-
-def test_summarize_image_in_history_multiple_messages(agent):
-    """测试历史记录中有多条消息时，只替换最后一条带图的用户消息"""
-    from langchain_core.messages import HumanMessage, AIMessage
-
-    session_id = "img_session_02"
-    history = agent._get_session_history(session_id)
-
-    # 添加多条消息
-    history.add_user_message("九曲桥在哪里？")
-    history.add_ai_message(AIMessage(content="九曲桥位于豫园中心。"))
-
-    # 添加带图消息
-    image_content = [
-        {"type": "text", "text": "描述这张图"},
-        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,fake_base64"}}
-    ]
-    history.add_user_message(HumanMessage(content=image_content))
-    history.add_ai_message(AIMessage(content="图片显示的是古建筑。"))
-
-    # 调用图像摘要
-    agent._summarize_image_in_history(session_id, "描述这张图")
-
-    # 验证：第一条用户消息不受影响
-    assert history.messages[0].content == "九曲桥在哪里？"
-    # 验证：第二条用户消息（带图）已被替换
-    assert "[已处理图像请求]" in history.messages[2].content
-    assert isinstance(history.messages[2].content, str)
-
-
-def test_summarize_image_in_history_no_image_message(agent):
-    """测试历史记录中没有带图消息时，方法不应报错"""
-    session_id = "no_img_session"
-    history = agent._get_session_history(session_id)
-
-    # 只添加纯文本消息
-    history.add_user_message("九曲桥的历史是什么？")
-    history.add_ai_message("九曲桥始建于明代。")
-
-    # 调用方法，不应抛出异常
-    agent._summarize_image_in_history(session_id, "九曲桥的历史是什么？")
-
-    # 验证消息未被修改
-    assert history.messages[0].content == "九曲桥的历史是什么？"
-
-
-def test_summarize_image_in_history_mixed_content(agent):
-    """测试混合内容（文本+图像）被正确替换"""
-    from langchain_core.messages import HumanMessage
-
-    session_id = "mixed_session"
-    history = agent._get_session_history(session_id)
-
-    # 构造复杂的混合内容
-    mixed_content = [
-        {"type": "text", "text": "请分析这个建筑"},
-        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,abc123"}},
-        {"type": "text", "text": "并给出导览建议"}
-    ]
-
-    history.add_user_message(HumanMessage(content=mixed_content))
-    agent._summarize_image_in_history(session_id, "请分析这个建筑并给出导览建议")
-
-    # 验证整个多模态内容被替换为单个文本字符串
-    user_msg = history.messages[0]
-    assert isinstance(user_msg.content, str)
-    assert "[已处理图像请求]" in user_msg.content
-    assert "data:image" not in user_msg.content
-
-
-def test_session_history_keeps_only_10_messages_after_image_requests(agent):
-    """测试图文请求后，历史记录仍然只保留最近10条"""
-    from langchain_core.messages import HumanMessage, AIMessage
-
-    session_id = "img_trim_session"
-    history = agent._get_session_history(session_id)
-
-    # 添加多条图文请求
-    for i in range(6):
-        image_content = [
-            {"type": "text", "text": f"图片问题{i}"},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,img{i}"}}
-        ]
-        history.add_user_message(HumanMessage(content=image_content))
-        history.add_ai_message(AIMessage(content=f"回答{i}"))
-    agent.print_history(session_id)
-    # 触发图像摘要
-    for i in range(6):
-        agent._summarize_image_in_history(session_id, f"图片问题{i}")
-        # agent.print_history(session_id)
-
-    # 添加更多消息使其超过10条
-    for i in range(6, 10):
-        history.add_user_message(f"文本问题{i}")
-        history.add_ai_message(f"文本回答{i}")
-
-
-    # 再次获取历史，验证只保留最近10条
-    trimmed_history = agent._get_session_history(session_id)
-    agent.print_history(session_id)
-    assert len(trimmed_history.messages) == 10, "历史记录应裁剪到10条"
-
-    # 验证所有图像数据都已被清理
-    for msg in trimmed_history.messages:
-        if isinstance(msg, HumanMessage) and isinstance(msg.content, str):
-            assert "data:image" not in msg.content, "历史记录中不应包含base64图像数据"
-
-
-# ==================== 图像处理工具函数测试 ====================
-
-def test_image_file_to_base64(tmp_path):
-    """测试图片路径 -> base64 压缩编码"""
-    img_path = tmp_path / "test.jpg"
-    img = Image.new("RGB", (2000, 2000), color="red")
-    img.save(img_path)
-
-    # 直接实例化，避免触发__init__中的LLM初始化
-    agent_instance = object.__new__(YuYuanGuidanceAgent)
-    encoded = agent_instance._image_file_to_base64(str(img_path))
-    assert isinstance(encoded, str)
-    assert len(encoded) > 0
-    # 验证可解码
-    decoded = base64.b64decode(encoded)
-    assert decoded[:2] == b"\xff\xd8"
-
-
-def test_image_file_to_base64_not_found():
-    """路径不存在应抛出 FileNotFoundError"""
-    agent_instance = object.__new__(YuYuanGuidanceAgent)
-    with pytest.raises(FileNotFoundError):
-        agent_instance._image_file_to_base64("/nonexistent/path.jpg")
-
-
-def test_normalize_base64_pure():
-    """纯 base64 应原样返回"""
-    b64 = "SGVsbG8gV29ybGQ="
-    agent_instance = object.__new__(YuYuanGuidanceAgent)
-    result = agent_instance._normalize_base64(b64)
-    assert result == b64
-
-
-def test_normalize_base64_data_uri():
-    """data:image/jpeg;base64,... 应去掉前缀，只留 payload"""
-    data_uri = "data:image/jpeg;base64,SGVsbG8gV29ybGQ="
-    agent_instance = object.__new__(YuYuanGuidanceAgent)
-    result = agent_instance._normalize_base64(data_uri)
-    assert result == "SGVsbG8gV29ybGQ="
-
-
-def test_normalize_base64_empty():
-    agent_instance = object.__new__(YuYuanGuidanceAgent)
-    assert agent_instance._normalize_base64("") == ""
-    assert agent_instance._normalize_base64(None) == ""
-
-
-# ==================== 图文接口测试（mock LLM） ====================
-
-class DummyLLMVision:
-    """模拟支持 vision 的 LLM"""
-    async def ainvoke(self, messages):
-        # 验证收到的是多模态消息格式
-        last_msg = messages[-1]
-        assert hasattr(last_msg, "content")
-        content = last_msg.content
-        assert isinstance(content, list)
-        has_text = any(c.get("type") == "text" for c in content)
-        has_image = any(c.get("type") == "image_url" for c in content)
-        assert has_text, "消息应包含文本部分"
-        assert has_image, "消息应包含图像部分"
-        return type("AIMessage", (), {"content": "图中有古建筑，红柱黄瓦，疑似亭台。"})()
-
+# ============================================================================
+# generate_guidance_with_image 接口测试
+# ============================================================================
 
 @pytest.mark.asyncio
-async def test_generate_guidance_with_image_no_image_provided(monkeypatch):
-    """无图时返回提示"""
-    # 避免触发真实 __init__（会初始化 ChatOpenAI）
-    agent = object.__new__(YuYuanGuidanceAgent)
-    agent.session_store = {}
+async def test_generate_guidance_with_image_no_image_provided(agent):
+    _section("generate_guidance_with_image | 无图像时返回提示")
+    _show("image_path", None)
+    _show("image_base64", None)
+
     ans = await agent.generate_guidance_with_image("这是什么？")
+
+    _show("实际返回", ans)
     assert "请提供图片" in ans
+    print("  ✓ 无图像输入时返回提示文案")
 
 
 @pytest.mark.asyncio
-async def test_generate_guidance_with_image_base64_path_success(agent, tmp_path):
-    """image_path 分支：验证路径读取、压缩、编码全链路"""
+async def test_generate_guidance_with_image_invalid_base64_returns_hint(agent):
+    _section("generate_guidance_with_image | 空 base64 返回提示")
+    _show("image_base64", repr(""))
+
+    ans = await agent.generate_guidance_with_image("这是什么？", image_base64="")
+
+    _show("实际返回", ans)
+    assert "请提供图片" in ans or "无效" in ans
+    print("  ✓ 空 base64 返回提示文案（非抛错）")
+
+
+@pytest.mark.asyncio
+async def test_generate_guidance_with_image_passes_image_in_state(agent, tmp_path):
+    _section("generate_guidance_with_image | 图像存入 state，消息为纯文字")
     img_path = tmp_path / "scene.jpg"
     Image.new("RGB", (800, 600), color="blue").save(img_path)
+    _show("图像文件", str(img_path))
+    _show("图像尺寸", "800×600 px")
 
-    class DummyChain:
-        async def ainvoke(self, payload, config=None):
-            # 验证 payload 包含正确的键
-            assert "context" in payload
-            assert "input" in payload
-            # 验证 input 是多模态格式
-            human_content = payload["input"]
-            assert isinstance(human_content, list)
-            img_part = next(c for c in human_content if c["type"] == "image_url")
-            assert img_part["image_url"]["url"].startswith("data:image/jpeg;base64,")
-            return "蓝色场景。"
-
-    # 初始化必要的属性
-    agent.base_system_content = "你是豫园的专业导游。"
-    agent.chain_with_history = DummyChain()
-
-    ans = await agent.generate_guidance_with_image(
+    await agent.generate_guidance_with_image(
         "描述这张图",
         image_path=str(img_path),
         session_id="img_test_01",
     )
-    assert ans == "蓝色场景。"
+
+    last_input = agent.agent._last_input
+    msg = last_input["messages"][0]
+    b64_in_state = last_input.get("current_image_base64", "")
+
+    _show("payload keys", list(last_input.keys()))
+    _show("current_image_base64 长度", len(b64_in_state))
+    _show("消息 content 类型", type(msg.content).__name__)
+    _show("消息内容 (前 60 字)", str(msg.content)[:60])
+    _show("消息含 image_url", "image_url" in str(msg.content))
+
+    assert "current_image_base64" in last_input
+    assert b64_in_state != ""
+    assert isinstance(msg, HumanMessage)
+    assert isinstance(msg.content, str)
+    assert "image_url" not in str(msg.content)
+    print("  ✓ 图像存入 state，LLM 消息为纯文字——工具可按需读取图像")
 
 
 @pytest.mark.asyncio
-async def test_generate_guidance_with_image_base64_direct_success(agent):
-    """image_base64 分支：直接传 base64，验证 normalize 后送入 LLM"""
-    class DummyChain:
-        async def ainvoke(self, payload, config=None):
-            human_content = payload["input"]
-            img_part = next(c for c in human_content if c["type"] == "image_url")
-            # data URI 中应含 /9j/ (JPEG magic bytes base64)
-            assert "/9j/" in img_part["image_url"]["url"] or "SGVsb" in img_part["image_url"]["url"]
-            return "红色场景。"
-
-    # 初始化必要的属性
-    agent.base_system_content = "你是豫园的专业导游。"
-    agent.chain_with_history = DummyChain()
-
+async def test_generate_guidance_with_image_base64_direct(agent):
+    _section("generate_guidance_with_image | 直传 base64 存入 state")
     img = Image.new("RGB", (100, 100), color="red")
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
     b64 = base64.b64encode(buf.getvalue()).decode()
+    _show("base64 长度 (字符)", len(b64))
 
-    ans = await agent.generate_guidance_with_image(
+    await agent.generate_guidance_with_image(
         "这是什么颜色？",
         image_base64=b64,
         session_id="img_test_02",
     )
-    assert ans == "红色场景。"
+
+    last_input = agent.agent._last_input
+    _show("state 中 base64 长度", len(last_input.get("current_image_base64", "")))
+    _show("state 与输入一致", last_input["current_image_base64"] == b64)
+    _show("消息 content 类型", type(last_input["messages"][0].content).__name__)
+
+    assert last_input["current_image_base64"] == b64
+    assert isinstance(last_input["messages"][0].content, str)
+    print("  ✓ base64 原样存入 state，消息为纯文字")
+
+
+@pytest.mark.asyncio
+async def test_generate_guidance_with_image_data_uri_stripped(agent):
+    _section("generate_guidance_with_image | data URI 前缀在存入 state 前去除")
+    raw_b64 = base64.b64encode(b"fake_jpeg_data").decode()
+    data_uri = f"data:image/jpeg;base64,{raw_b64}"
+    _show("输入 (data URI 前 60 字)", data_uri[:60])
+    _show("期望存入 state 的纯 base64", raw_b64)
+
+    await agent.generate_guidance_with_image(
+        "描述图像",
+        image_base64=data_uri,
+        session_id="img_test_03",
+    )
+
+    stored = agent.agent._last_input["current_image_base64"]
+    _show("实际存入 state", stored)
+    _show("以 'data:' 开头", stored.startswith("data:"))
+
+    assert stored == raw_b64
+    assert not stored.startswith("data:")
+    print("  ✓ data: 前缀去除，state 中只存纯 payload")
 
 
 @pytest.mark.asyncio
 async def test_generate_guidance_with_image_llm_error_fallback(agent):
-    """LLM 异常时返回兜底文案"""
-    class BadLLM:
-        async def ainvoke(self, messages):
-            raise RuntimeError("network error")
+    _section("generate_guidance_with_image | Agent 异常时返回兜底文案")
+    agent.agent = DummyAgent(raise_error=True)
+    _show("mock 行为", "ainvoke 抛出 RuntimeError")
 
-    agent.llm = BadLLM()
     ans = await agent.generate_guidance_with_image(
         "描述这张图",
         image_base64=base64.b64encode(b"fake").decode(),
-        session_id="img_test_03",
+        session_id="img_test_err",
     )
+
+    _show("实际返回", ans)
     assert ans == "导览助手暂时无法连接，请稍后再试。"
+    print("  ✓ 异常被捕获，返回兜底文案")
+
+
+# ============================================================================
+# YuYuanAgentState 结构测试
+# ============================================================================
+
+def test_agent_state_has_image_field():
+    _section("YuYuanAgentState | current_image_base64 字段存在且默认为空")
+    state = YuYuanAgentState(messages=[], current_image_base64="")
+    _show("state['current_image_base64']", repr(state["current_image_base64"]))
+    assert state["current_image_base64"] == ""
+    print("  ✓ 字段存在，默认值为 ''")
+
+
+def test_agent_state_image_field_stores_value():
+    _section("YuYuanAgentState | current_image_base64 正确存储赋值")
+    b64 = "SGVsbG8="
+    state = YuYuanAgentState(messages=[], current_image_base64=b64)
+    _show("赋值", b64)
+    _show("读取", state["current_image_base64"])
+    assert state["current_image_base64"] == b64
+    print("  ✓ 赋值与读取一致")

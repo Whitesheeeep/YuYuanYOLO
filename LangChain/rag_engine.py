@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 from typing import Optional, List, Tuple
 
 from langchain_classic.retrievers import ContextualCompressionRetriever
@@ -174,6 +175,7 @@ class YuYuanRAG:
         if not self.is_ready():
             return []
 
+        start_time = time.perf_counter()
         threshold = threshold if threshold is not None else config.RAG_SCORE_THRESHOLD
         if not rerank:
             """带分数过滤的精细检索"""
@@ -215,6 +217,8 @@ class YuYuanRAG:
                     similarity = 1 / (1 + score)
                     if similarity >= threshold:
                         results.append((doc.page_content, float(similarity)))
+
+                print(f"[RAG] 检索耗时：{time.perf_counter() - start_time:.2f} 秒，返回 {len(results)} 条结果")
                 return results
 
     def is_ready(self) -> bool:

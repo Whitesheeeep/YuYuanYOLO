@@ -4,18 +4,21 @@ YuYuan YOLO 检测服务（WebSocket 服务器）
 
 功能概述：
 1. 作为 WebSocket 服务器，接收来自 Unity 客户端的图像数据
-2. 使用 YOLO 模型进行目标检测
+2. 使用 YOLO 模型进行实时目标检测（绘框、发送结果给 Unity）
 3. 通过 Qt 信号槽机制向外部（监控界面）传递检测结果
 4. 支持多设备同时连接
 
-架构设计：
-- WebSocket 服务器运行在后台线程（asyncio 事件循环）
-- 使用 Qt 信号槽机制实现线程安全的数据传递
-- 可独立运行（无 PyQt 界面），也可与 detection_monitor.py 配合使用
+导览 Agent 架构（YuYuanGuidanceAgent）：
+- YOLO 模型实例在服务启动时加载，通过构造函数注入 Agent
+- Agent 内部持有三个工具：rag_search / yolo_detect / image_understand
+- 图像存入 AgentState.current_image_base64，LLM 初始轮仅见文字；
+  工具按需从 state 读取图像，避免每轮重复传输大体积 base64
+- 会话记忆由 InMemorySaver checkpointer 管理，按 session_id 隔离
 
 数据流向：
 Unity 客户端 --WebSocket--> 服务器 --YOLO检测--> 信号发射器 --Qt信号--> 监控界面
-                                    └--> 回发结果 --> Unity 客户端
+                                    └--> 回发检测结果 --> Unity 客户端
+Unity 客户端 --guidance_request--> Agent(RAG/YOLO/Vision tools) --> 回发导览答案
 """
 import sys
 import asyncio
@@ -87,8 +90,10 @@ def get_guidance_agent():
     if _guidance_agent is not None:
         return _guidance_agent
     try:
-        _guidance_agent = YuYuanGuidanceAgent()
-        _guidance_agent.agent_history_limit = AGENT_HISTORY_LIMIT
+        _guidance_agent = YuYuanGuidanceAgent(
+            yolo_model=model,
+            agent_history_limit=AGENT_HISTORY_LIMIT,
+        )
         print(f"[Agent] 导览 Agent 初始化成功，history_limit={AGENT_HISTORY_LIMIT}")
     except Exception as e:
         _guidance_agent = None
@@ -150,7 +155,6 @@ class ClientSession:
         self.remote_address = remote_address
         self.connected_at = asyncio.get_event_loop().time()
         self.last_original_image = None
-        self.chat_history = []
         self.guidance_tasks = set()
 
     @property
@@ -268,8 +272,7 @@ async def process_guidance_request(connection_id: str, device_id: str, device_na
 
     session = clients.get(connection_id)
     if session is not None:
-        session.chat_history.append({'role': 'user', 'content': query})
-        session.chat_history.append({'role': 'assistant', 'content': answer})
+        print(f"[Guidance] session={make_session_id(connection_id, device_id)} 答复已发送")
 
     signal_emitter.guidance_result.emit(response, connection_id)
     await send_to_client(connection_id, json.dumps(response, ensure_ascii=False))
