@@ -14,13 +14,13 @@ DOUBao_MODEL = "doubao-seed-2-0-lite-260215"
 #Agent 配置
 RERANK = True #默认需要重排
 RERANK_TOP_K = 3 #重排时保留的 top k 个文档
-SYSTEM_PROMPT_PATH = r"D:\Yuyuan_2\YuyuanYOLO\LangChain\data\system_prompt.txt"
+SYSTEM_PROMPT_PATH = r"D:\master\Yuyuan2\YuyuanYOLO\LangChain\data\system_prompt.txt"
 
 # --- RAG 配置 ---
 EMBEDDING_MODEL = "BAAI/bge-m3"
 EMBEDDING_DEVICE = "cpu"  # 开发环境用 cpu，生产环境可改为 "cuda"
-FAISS_INDEX_PATH = r"D:\Yuyuan_2\YuyuanYOLO\LangChain\data\faiss_index"
-KNOWLEDGE_BASE_PATH = r"D:\Yuyuan_2\YuyuanYOLO\LangChain\data\knowledge_base.txt"
+FAISS_INDEX_PATH = r"D:\master\Yuyuan2\YuyuanYOLO\LangChain\data\faiss_index"
+KNOWLEDGE_BASE_PATH = r"D:\master\Yuyuan2\YuyuanYOLO\LangChain\data\knowledge_base.txt"
 CHUNK_SIZE = 300
 CHUNK_OVERLAP = 50
 RAG_SCORE_THRESHOLD = 0.7
