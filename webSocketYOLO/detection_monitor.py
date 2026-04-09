@@ -14,22 +14,23 @@ detection_websocket.py (WS 服务器) --Qt信号--> MonitorWindow (界面显示)
 - 运行本文件：启动 WS 后台服务 + PyQt5 界面（完整监控模式）
 - detection_websocket.py 可独立运行，作为无界面的检测服务
 """
+import base64
+import json
 import sys
 import threading
-import json
-import base64
+
 import cv2
 import numpy as np
-from pathlib import Path
-
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout,
-                             QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QSplitter, QSizePolicy,
-                             QTextEdit, QSpinBox)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QImage, QColor, QFont
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout,
+                             QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QSplitter, QSizePolicy,
+                             QTextEdit, QSpinBox, QPushButton, QGridLayout)
 
+import detection_websocket as _dws
 # 从 WS 模块导入信号发射器和服务器启动函数
 from detection_websocket import signal_emitter, run_websocket_server, local_ip, port
+from ButtonConfig import BUTTON_CONFIGS
 
 # 历史保留策略
 MONITOR_HISTORY_LIMIT_DEFAULT = 20
@@ -41,23 +42,6 @@ MONITOR_HISTORY_LIMIT_DEFAULT = 20
 
 
 class MonitorWindow(QMainWindow):
-    """
-    监控窗口主类
-
-    功能：
-    1. 显示所有连接的设备列表
-    2. 显示选中设备的原始视频流和检测后视频流
-    3. 实时更新检测结果
-    4. 支持切换不同设备的视频流
-
-    界面布局：
-    ┌─────────────────────────────────────────────────────┐
-    │  设备列表  │  原始视频流  │  检测后视频流          │
-    │  ● 设备1   │              │                        │
-    │  ● 设备2   │              │                        │
-    │            │              │                        │
-    └─────────────────────────────────────────────────────┘
-    """
     def __init__(self):
         super().__init__()
         self.setWindowTitle('YuYuan 检测监控系统')
@@ -140,6 +124,24 @@ class MonitorWindow(QMainWindow):
 
         video_layout.addWidget(video_splitter)
 
+        # 命令按钮区（2行×5列）
+        btn_grid = QGridLayout()
+        btn_grid.setSpacing(6)
+        for cfg in BUTTON_CONFIGS:
+            btn = QPushButton(cfg['name'])
+            btn.setMinimumHeight(32)
+            btn.clicked.connect(lambda checked, c=cfg: self.on_command_button_clicked(c['id'], c['name']))
+            row, col = divmod(cfg['id'] - 1, 5)
+            btn_grid.addWidget(btn, row, col)
+        video_layout.addLayout(btn_grid)
+
+        # 清除历史按钮
+        self.clear_history_btn = QPushButton("清除对话历史")
+        self.clear_history_btn.setMinimumHeight(32)
+        self.clear_history_btn.setStyleSheet("background-color: #cc4444; color: white;")
+        self.clear_history_btn.clicked.connect(self.on_clear_history_clicked)
+        video_layout.addWidget(self.clear_history_btn)
+
         # 当前设备对话历史
         self.chat_history_view = QTextEdit()
         self.chat_history_view.setReadOnly(True)
@@ -162,6 +164,7 @@ class MonitorWindow(QMainWindow):
         signal_emitter.guidance_result.connect(self.on_guidance_received)
         signal_emitter.client_connected.connect(self.on_client_connected)
         signal_emitter.client_disconnected.connect(self.on_client_disconnected)
+        signal_emitter.history_cleared.connect(self.on_history_cleared)
 
     def on_client_connected(self, connection_id, device_id, device_name, ip, port):
         """客户端连接事件处理。"""
@@ -293,6 +296,44 @@ class MonitorWindow(QMainWindow):
         """切换设备。"""
         self.current_connection_id = item.data(Qt.UserRole)
         self.refresh_history_display()
+
+    def on_clear_history_clicked(self):
+        """清除当前选中设备的对话历史。"""
+        if not self.current_connection_id:
+            return
+        from detection_websocket import _guidance_agent
+        if _guidance_agent is not None:
+            _guidance_agent.clear_session_history(self.current_connection_id)
+            print(f"[Monitor] 已清除对话历史: {self.current_connection_id}")
+        else:
+            print("[Monitor] Agent 未初始化，无法清除历史")
+        self.monitor_history.pop(self.current_connection_id, None)
+        self.refresh_history_display()
+
+    def on_history_cleared(self, connection_id):
+        """远程清除历史信号处理（由控制客户端触发）。"""
+        self.monitor_history.pop(connection_id, None)
+        if connection_id == self.current_connection_id:
+            self.refresh_history_display()
+        print(f"[Monitor] 历史显示已同步清除: {connection_id}")
+
+    def on_command_button_clicked(self, button_id: int, button_name: str):
+        """按钮被点击，向当前选中设备发送 command JSON。"""
+        if not self.current_connection_id:
+            return
+        loop = _dws._ws_loop
+        if loop is None:
+            print("[Monitor] WS event loop 尚未就绪")
+            return
+        import asyncio
+        from detection_websocket import send_to_client
+        cmd = json.dumps({'type': 'command', 'button_id': button_id, 'button_name': button_name},
+                         ensure_ascii=False)
+        asyncio.run_coroutine_threadsafe(
+            send_to_client(self.current_connection_id, cmd),
+            loop
+        )
+        print(f"[Monitor] 发送命令 button_id={button_id}({button_name}) → {self.current_connection_id}")
 
     def closeEvent(self, event):
         """关闭窗口事件处理。"""

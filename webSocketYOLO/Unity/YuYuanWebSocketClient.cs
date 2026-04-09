@@ -25,6 +25,8 @@ namespace YOLO.WebSocket
         public int jpegQuality = 80;
 
         private NativeWebSocket.WebSocket websocket;
+        /// <summary>暴露 WebSocket 实例，供 YuYuanCommandReceiver 等外部模块注册处理方法。</summary>
+        public NativeWebSocket.WebSocket Websocket => websocket;
         private WebCamTexture webcamTexture;
         private Texture2D captureTexture;
         private bool isCapturing = false;

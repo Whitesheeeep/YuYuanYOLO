@@ -33,6 +33,7 @@ from pathlib import Path
 from ultralytics import YOLO
 import threading
 import socket
+import ButtonConfig
 
 # 允许从项目根目录导入 LangChain 模块
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -78,8 +79,18 @@ class MsgType:
 # 历史保留策略
 AGENT_HISTORY_LIMIT = 10
 
+# ============================================================================
+# 按钮配置（修改 name 即可自定义按钮名称）
+# ============================================================================
+
 # 存储所有连接的 WebSocket 客户端
 clients = {}
+
+# 存储所有连接的控制客户端（key = connection_id）
+control_clients = {}
+
+# asyncio event loop（供跨线程调用，由 run_websocket_server 设置）
+_ws_loop = None
 
 _guidance_agent = None
 
@@ -194,6 +205,7 @@ class SignalEmitter(QObject):
     guidance_result = pyqtSignal(dict, str)
     client_connected = pyqtSignal(str, str, str, str, int)
     client_disconnected = pyqtSignal(str)
+    history_cleared = pyqtSignal(str)  # connection_id
 
 
 signal_emitter = SignalEmitter()
@@ -335,6 +347,27 @@ def parse_binary_request(data: bytes):
 # ============================================================================
 
 
+async def broadcast_client_list_to_controllers():
+    """向所有控制客户端推送当前检测客户端列表。"""
+    if not control_clients:
+        return
+    payload = json.dumps({
+        'type': 'detection_client_list',
+        'clients': [
+            {
+                'connection_id': s.connection_id,
+                'device_id': s.device_id,
+                'device_name': s.device_name,
+            }
+            for s in clients.values()
+        ]
+    }, ensure_ascii=False)
+    await asyncio.gather(
+        *[ws.send(payload) for ws in control_clients.values()],
+        return_exceptions=True
+    )
+
+
 async def handle_client(websocket):
     """处理单个客户端连接。"""
     remote_address = websocket.remote_address
@@ -344,7 +377,8 @@ async def handle_client(websocket):
     current_connection_id = None
 
     try:
-        def ensure_session(device_id: str, device_name: str) -> ClientSession:
+        def ensure_session(device_id: str, device_name: str):
+            """返回 (ClientSession, is_new)"""
             nonlocal current_connection_id
             if connection_id not in clients:
                 session_obj = ClientSession(connection_id, device_id, device_name, websocket, remote_address)
@@ -353,7 +387,7 @@ async def handle_client(websocket):
                 print(f"[注册] 新设备: {session_obj}")
                 print(f"当前连接设备数: {len(clients)}")
                 signal_emitter.client_connected.emit(connection_id, device_id, device_name, session_obj.ip, session_obj.port)
-                return session_obj
+                return session_obj, True
 
             session_obj = clients[connection_id]
             session_obj.websocket = websocket
@@ -361,7 +395,7 @@ async def handle_client(websocket):
             session_obj.device_id = device_id
             session_obj.device_name = device_name
             current_connection_id = connection_id
-            return session_obj
+            return session_obj, False
 
         async for message in websocket:
             # ============================================================
@@ -375,7 +409,9 @@ async def handle_client(websocket):
 
                 device_id = device_id or make_temp_device_id(connection_id)
                 device_name = device_name or device_id
-                session = ensure_session(device_id, device_name)
+                session, is_new = ensure_session(device_id, device_name)
+                if is_new:
+                    await broadcast_client_list_to_controllers()
 
                 # ---- Guidance 二进制请求 ----
                 if msg_type == MsgType.GUIDANCE:
@@ -430,7 +466,9 @@ async def handle_client(websocket):
                 if message_type == 'detect':
                     device_id = incoming_device_id
                     device_name = incoming_device_name
-                    session = ensure_session(device_id, device_name)
+                    session, is_new = ensure_session(device_id, device_name)
+                    if is_new:
+                        await broadcast_client_list_to_controllers()
 
                     try:
                         image_data = base64.b64decode(data.get('image', ''))
@@ -445,7 +483,9 @@ async def handle_client(websocket):
                 elif message_type == 'guidance_request':
                     device_id = incoming_device_id
                     device_name = incoming_device_name
-                    session = ensure_session(device_id, device_name)
+                    session, is_new = ensure_session(device_id, device_name)
+                    if is_new:
+                        await broadcast_client_list_to_controllers()
 
                     query = (data.get('query') or data.get('message') or data.get('user_query') or '').strip()
                     if not query:
@@ -489,6 +529,41 @@ async def handle_client(websocket):
                     )
                     session.guidance_tasks.add(task)
                     task.add_done_callback(lambda t, s=session: s.guidance_tasks.discard(t))
+                    continue
+
+                elif message_type == 'register_control':
+                    client_id = data.get('client_id') or connection_id
+                    control_clients[connection_id] = websocket
+                    current_connection_id = connection_id  # 记录用于断开时清理
+                    print(f"[控制端] 注册: client_id={client_id}, connection_id={connection_id}")
+                    await broadcast_client_list_to_controllers()
+                    continue
+
+                elif message_type == 'send_command':
+                    target_id = data.get('target_connection_id', '')
+                    button_id = data.get('button_id', 0)
+                    button_name = data.get('button_name', '')
+                    cmd = json.dumps({
+                        'type': 'command',
+                        'button_id': button_id,
+                        'button_name': button_name,
+                    }, ensure_ascii=False)
+                    if target_id in clients:
+                        await send_to_client(target_id, cmd)
+                        print(f"[命令] 转发 button_id={button_id}({button_name}) → {target_id}")
+                    else:
+                        print(f"[命令] 目标 {target_id} 不存在，已忽略")
+                    continue
+
+                elif message_type == 'clear_history':
+                    target_id = data.get('target_connection_id', '') or connection_id
+                    if _guidance_agent is not None:
+                        session_id = target_id
+                        _guidance_agent.clear_session_history(session_id)
+                        print(f"[清除历史] 已清除会话: {session_id}")
+                    else:
+                        print(f"[清除历史] Agent 未初始化，跳过")
+                    signal_emitter.history_cleared.emit(target_id)
                     continue
 
                 else:
@@ -589,7 +664,10 @@ async def handle_client(websocket):
     except Exception as e:
         print(f"[错误] 处理客户端消息时出错: {e}")
     finally:
-        if current_connection_id and current_connection_id in clients:
+        if current_connection_id and current_connection_id in control_clients:
+            control_clients.pop(current_connection_id)
+            print(f"[移除] 控制客户端: {current_connection_id}")
+        elif current_connection_id and current_connection_id in clients:
             removed_session = clients.pop(current_connection_id)
             print(f"[移除] 设备: {removed_session}")
             print(f"当前连接设备数: {len(clients)}")
@@ -597,6 +675,7 @@ async def handle_client(websocket):
                 task.cancel()
             removed_session.guidance_tasks.clear()
             signal_emitter.client_disconnected.emit(current_connection_id)
+            await broadcast_client_list_to_controllers()
 
 
 async def send_to_client(connection_id, message):
@@ -639,7 +718,11 @@ async def start_websocket_server():
 
 def run_websocket_server():
     """在单独线程中运行 WebSocket 服务器。"""
-    asyncio.run(start_websocket_server())
+    global _ws_loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    _ws_loop = loop
+    loop.run_until_complete(start_websocket_server())
 
 
 # ============================================================================
