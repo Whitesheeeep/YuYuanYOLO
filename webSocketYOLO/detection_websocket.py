@@ -555,6 +555,20 @@ async def handle_client(websocket):
                         print(f"[命令] 目标 {target_id} 不存在，已忽略")
                     continue
 
+                elif message_type == "query":
+                    target_id = data.get('target_connection_id', '')
+                    query = data.get('query', '')
+                    cmd = json.dumps({
+                        'type': 'query',
+                        'query': query
+                    }, ensure_ascii=False)
+                    if target_id in clients:
+                        await send_to_client(target_id, cmd)
+                        print(f"[命令] 转发 query={query} → {target_id}")
+                    else:
+                        print(f"[命令] 目标 {target_id} 不存在，已忽略")
+                    continue
+
                 elif message_type == 'clear_history':
                     target_id = data.get('target_connection_id', '') or connection_id
                     if _guidance_agent is not None:

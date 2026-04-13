@@ -102,6 +102,20 @@ def send_command(target_connection_id: str, button_id: int, button_name: str):
     }, ensure_ascii=False)
     asyncio.run_coroutine_threadsafe(_ws.send(payload), _ws_loop)
 
+
+def send_query(target_connection_id: str, query: str):
+    """从 Qt 线程安全地发送 Chat 查询到 asyncio 循环。"""
+    if _ws is None or _ws_loop is None:
+        bridge.status_changed.emit("未连接，无法发送 Chat")
+        return
+
+    payload = json.dumps({
+        "type": "query",
+        "target_connection_id": target_connection_id,
+        "query": query,
+    }, ensure_ascii=False)
+    asyncio.run_coroutine_threadsafe(_ws.send(payload), _ws_loop)
+
 # ============================================================================
 # 主窗口
 # ============================================================================
@@ -147,6 +161,17 @@ class ControlWindow(QMainWindow):
         target_layout.addStretch(1)
         root.addLayout(target_layout)
 
+        # ---- Chat 输入 ----
+        chat_layout = QHBoxLayout()
+        chat_layout.addWidget(QLabel("Chat:"))
+        self.chat_edit = QLineEdit()
+        self.chat_edit.setPlaceholderText("输入要发送给目标设备的问题...")
+        chat_layout.addWidget(self.chat_edit)
+        self.send_chat_btn = QPushButton("发送")
+        self.send_chat_btn.setFixedWidth(80)
+        chat_layout.addWidget(self.send_chat_btn)
+        root.addLayout(chat_layout)
+
         # ---- 命令按钮（2行×5列）----
         btn_grid = QGridLayout()
         btn_grid.setSpacing(8)
@@ -163,6 +188,7 @@ class ControlWindow(QMainWindow):
 
     def _connect_signals(self):
         self.connect_btn.clicked.connect(self._on_connect)
+        self.send_chat_btn.clicked.connect(self._on_send_chat)
         bridge.client_list_updated.connect(self._on_client_list)
         bridge.status_changed.connect(self.statusBar().showMessage)
 
@@ -194,6 +220,22 @@ class ControlWindow(QMainWindow):
         target_id = self._detection_clients[idx]["connection_id"]
         send_command(target_id, button_id, button_name)
         self.statusBar().showMessage(f"已发送 [{button_name}] → {target_id}")
+
+    def _on_send_chat(self):
+        idx = self.target_combo.currentIndex()
+        if idx < 0 or idx >= len(self._detection_clients):
+            self.statusBar().showMessage("请先选择目标设备")
+            return
+
+        query = self.chat_edit.text().strip()
+        if not query:
+            self.statusBar().showMessage("请输入 Chat 内容")
+            return
+
+        target_id = self._detection_clients[idx]["connection_id"]
+        send_query(target_id, query)
+        self.statusBar().showMessage(f"已发送 Chat → {target_id}")
+        self.chat_edit.clear()
 
 
 # ============================================================================

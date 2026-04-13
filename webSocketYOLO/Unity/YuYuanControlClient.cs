@@ -36,6 +36,10 @@ namespace YuYuan.Control
         [Header("清除历史")]
         public Button clearHistoryButton;
 
+        [Header("Chat 发送")]
+        public TMP_InputField chatInputField;
+        public Button sendButton;
+
         // ----------------------------------------------------------------
         // 私有状态
         // ----------------------------------------------------------------
@@ -54,6 +58,9 @@ namespace YuYuan.Control
             // 清除历史按钮
             if (clearHistoryButton != null)
                 clearHistoryButton.onClick.AddListener(SendClearHistory);
+
+            if (sendButton != null)
+                sendButton.onClick.AddListener(SendChatQuery);
 
             // 命令按钮 1~10
             for (int i = 0; i < commandButtons.Length; i++)
@@ -76,6 +83,8 @@ namespace YuYuan.Control
             connectButton.onClick.RemoveListener(Connect);
             if (clearHistoryButton != null)
                 clearHistoryButton.onClick.RemoveListener(SendClearHistory);
+            if (sendButton != null)
+                sendButton.onClick.RemoveListener(SendChatQuery);
             for (int i = 0; i < commandButtons.Length; i++)
             {
                 if (commandButtons[i] != null)
@@ -205,6 +214,43 @@ namespace YuYuan.Control
             Debug.Log($"[ControlClient] 清除历史 → {targetId}");
         }
 
+        private async void SendChatQuery()
+        {
+            if (_websocket == null || _websocket.State != WebSocketState.Open)
+            {
+                Debug.LogWarning("[ControlClient] 未连接，无法发送 Chat");
+                return;
+            }
+
+            int idx = targetDropdown != null ? targetDropdown.value : -1;
+            if (idx < 0 || idx >= _connectionIds.Count)
+            {
+                Debug.LogWarning("[ControlClient] 请先选择目标设备");
+                return;
+            }
+
+            string queryText = chatInputField != null ? chatInputField.text.Trim() : string.Empty;
+            if (string.IsNullOrEmpty(queryText))
+            {
+                Debug.LogWarning("[ControlClient] Chat 输入为空，取消发送");
+                return;
+            }
+
+            string targetId = _connectionIds[idx];
+            var msg = new SendQueryMessage
+            {
+                type = "query",
+                target_connection_id = targetId,
+                query = queryText
+            };
+
+            await _websocket.SendText(JsonUtility.ToJson(msg));
+            Debug.Log($"[ControlClient] 发送 Chat → {targetId}: {queryText}");
+
+            if (chatInputField != null)
+                chatInputField.text = string.Empty;
+        }
+
         // ----------------------------------------------------------------
         // Dropdown 更新
         // ----------------------------------------------------------------
@@ -257,6 +303,14 @@ namespace YuYuan.Control
             public string target_connection_id;
             public int    button_id;
             public string button_name;
+        }
+
+        [Serializable]
+        private class SendQueryMessage
+        {
+            public string type;
+            public string target_connection_id;
+            public string query;
         }
     }
 }
