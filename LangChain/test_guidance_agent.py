@@ -1,28 +1,30 @@
 """
-单元测试：YuYuanGuidanceAgent
+单元测试：YuYuanGuidanceAgent.
 ================================
 策略：绕过真实 __init__（避免初始化 LLM/RAG），
 通过 object.__new__ + 手动赋属性来测试各个方法。
 需要真实 agent 执行的测试使用轻量 DummyAgent mock。
 """
-import pytest
-import os
-import io
+
 import base64
+import io
+
+import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 from PIL import Image
-from langchain_core.messages import HumanMessage, AIMessage
 
-from LangChain.guidance_agent import YuYuanGuidanceAgent, YuYuanAgentState, _apply_nms
-
+from LangChain.guidance_agent import YuYuanAgentState, YuYuanGuidanceAgent, _apply_nms
 
 # ============================================================================
 # 审查输出辅助
 # ============================================================================
 
+
 def _section(title: str):
     print(f"\n{'─' * 60}")
     print(f"  {title}")
     print(f"{'─' * 60}")
+
 
 def _show(label: str, value):
     val_str = str(value)
@@ -35,6 +37,7 @@ def _show(label: str, value):
 # 公共 Dummy 组件
 # ============================================================================
 
+
 class DummyRAG:
     def retrieve_with_score(self, query, k=3, rerank=False):
         if not query:
@@ -45,7 +48,8 @@ class DummyRAG:
 
 
 class DummyAgent:
-    """模拟 create_agent 返回的 agent 对象，用于测试 generate_guidance* 接口。"""
+    """模拟 create_agent 返回的 agent 对象，用于测试 generate_guidance* 接口。."""
+
     def __init__(self, response="导览建议：从九曲桥入口开始参观。", raise_error=False):
         self._response = response
         self._raise_error = raise_error
@@ -70,9 +74,10 @@ class DummyCheckpointer:
 # Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def agent():
-    """创建最小化 agent 实例，跳过真实 __init__。"""
+    """创建最小化 agent 实例，跳过真实 __init__。."""
     a = object.__new__(YuYuanGuidanceAgent)
     a.rag = DummyRAG()
     a._yolo_model = None
@@ -85,6 +90,7 @@ def agent():
 # ============================================================================
 # _apply_nms 测试
 # ============================================================================
+
 
 def test_apply_nms_empty():
     _section("NMS | 空输入")
@@ -136,6 +142,7 @@ def test_apply_nms_keeps_non_overlap():
 # ============================================================================
 # 图像辅助方法测试
 # ============================================================================
+
 
 def test_image_file_to_base64_compresses_large_image(tmp_path):
     _section("图像编码 | 大图压缩 + base64 编码")
@@ -207,6 +214,7 @@ def test_normalize_base64_empty():
 # 会话管理测试
 # ============================================================================
 
+
 def test_clear_session_history_removes_matching_keys(agent):
     _section("会话管理 | clear_session_history 按 thread_id 清除")
     storage_before = {
@@ -244,6 +252,7 @@ def test_delete_session_history_delegates_to_clear(agent, monkeypatch):
 # generate_guidance 接口测试
 # ============================================================================
 
+
 @pytest.mark.asyncio
 async def test_generate_guidance_success(agent):
     _section("generate_guidance | 正常返回导览建议")
@@ -252,10 +261,10 @@ async def test_generate_guidance_success(agent):
     _show("输入 query", query)
     _show("session_id", session)
 
-    ans = await agent.generate_guidance(query, session_id=session)
+    and = await agent.generate_guidance(query, session_id=session)
 
-    _show("Agent 返回", ans)
-    assert "导览建议" in ans
+    _show("Agent 返回", and)
+    assert "导览建议" in and
     print("  ✓ 返回包含'导览建议'关键词")
 
 
@@ -290,10 +299,10 @@ async def test_generate_guidance_fail_returns_fallback(agent):
     agent.agent = DummyAgent(raise_error=True)
     _show("mock 行为", "ainvoke 抛出 RuntimeError")
 
-    ans = await agent.generate_guidance("九曲桥", session_id="tourist_A")
+    and = await agent.generate_guidance("九曲桥", session_id="tourist_A")
 
-    _show("实际返回", ans)
-    assert ans == "导览助手暂时无法连接，请稍后再试。"
+    _show("实际返回", and)
+    assert and == "导览助手暂时无法连接，请稍后再试。"
     print("  ✓ 异常被捕获，返回兜底文案")
 
 
@@ -301,16 +310,17 @@ async def test_generate_guidance_fail_returns_fallback(agent):
 # generate_guidance_with_image 接口测试
 # ============================================================================
 
+
 @pytest.mark.asyncio
 async def test_generate_guidance_with_image_no_image_provided(agent):
     _section("generate_guidance_with_image | 无图像时返回提示")
     _show("image_path", None)
     _show("image_base64", None)
 
-    ans = await agent.generate_guidance_with_image("这是什么？")
+    and = await agent.generate_guidance_with_image("这是什么？")
 
-    _show("实际返回", ans)
-    assert "请提供图片" in ans
+    _show("实际返回", and)
+    assert "请提供图片" in and
     print("  ✓ 无图像输入时返回提示文案")
 
 
@@ -319,10 +329,10 @@ async def test_generate_guidance_with_image_invalid_base64_returns_hint(agent):
     _section("generate_guidance_with_image | 空 base64 返回提示")
     _show("image_base64", repr(""))
 
-    ans = await agent.generate_guidance_with_image("这是什么？", image_base64="")
+    and = await agent.generate_guidance_with_image("这是什么？", image_base64="")
 
-    _show("实际返回", ans)
-    assert "请提供图片" in ans or "无效" in ans
+    _show("实际返回", and)
+    assert "请提供图片" in and or "无效" in and
     print("  ✓ 空 base64 返回提示文案（非抛错）")
 
 
@@ -412,20 +422,21 @@ async def test_generate_guidance_with_image_llm_error_fallback(agent):
     agent.agent = DummyAgent(raise_error=True)
     _show("mock 行为", "ainvoke 抛出 RuntimeError")
 
-    ans = await agent.generate_guidance_with_image(
+    and = await agent.generate_guidance_with_image(
         "描述这张图",
         image_base64=base64.b64encode(b"fake").decode(),
         session_id="img_test_err",
     )
 
-    _show("实际返回", ans)
-    assert ans == "导览助手暂时无法连接，请稍后再试。"
+    _show("实际返回", and)
+    assert and == "导览助手暂时无法连接，请稍后再试。"
     print("  ✓ 异常被捕获，返回兜底文案")
 
 
 # ============================================================================
 # YuYuanAgentState 结构测试
 # ============================================================================
+
 
 def test_agent_state_has_image_field():
     _section("YuYuanAgentState | current_image_base64 字段存在且默认为空")
