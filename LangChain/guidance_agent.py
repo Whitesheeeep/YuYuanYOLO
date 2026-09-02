@@ -1,37 +1,39 @@
-import os
-import io
+from __future__ import annotations
+
 import base64
+import io
+import os
 import time
-from typing import Optional, Any
+from typing import Any
 
 import cv2
 import numpy as np
-from PIL import Image
-from pydantic import SecretStr
+from langchain.agents import AgentState, create_agent
+from langchain.agents.middleware import before_model
+from langchain.tools import ToolRuntime
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
+from langchain_core.tools import tool
 
 # 核心 LangChain 导入
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage, RemoveMessage, ToolMessage
-from langchain_core.tools import tool
-from langchain.tools import ToolRuntime
-from langchain.agents import create_agent, AgentState
-from langchain.agents.middleware import before_model
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime
+from PIL import Image
+from pydantic import SecretStr
 
 from . import config
 from .rag_engine import YuYuanRAG
-
 
 # ============================================================================
 # 自定义 Agent State（在标准 AgentState 基础上增加图像字段）
 # ============================================================================
 
+
 class YuYuanAgentState(AgentState):
-    """扩展 AgentState，新增当前帧图像字段。
-    图像不放入 messages，避免 LLM 在初始轮直接分析；
-    工具按需从 state 中读取。"""
+    """扩展 AgentState，新增当前帧图像字段。 图像不放入 messages，避免 LLM 在初始轮直接分析； 工具按需从 state 中读取。.
+    """
+
     current_image_base64: str = ""
 
 
@@ -39,8 +41,9 @@ class YuYuanAgentState(AgentState):
 # 模块级工具函数
 # ============================================================================
 
+
 def _apply_nms(boxes: list, scores: list, iou_threshold: float = 0.5) -> list:
-    """非极大值抑制（NMS）。"""
+    """非极大值抑制（NMS）。."""
     if not boxes:
         return []
     boxes = np.array(boxes)
@@ -68,24 +71,24 @@ def _apply_nms(boxes: list, scores: list, iou_threshold: float = 0.5) -> list:
 # Agent 主类
 # ============================================================================
 
+
 class YuYuanGuidanceAgent:
-    """豫园 XR 听障辅助导游 Agent
-    架构：create_agent + YuYuanAgentState + checkpointer + middleware
-    图像单独存入 state，工具通过 ToolRuntime 按需读取，LLM 初始轮不直接分析图像。
+    """豫园 XR 听障辅助导游 Agent 架构：create_agent + YuYuanAgentState + checkpointer + middleware 图像单独存入 state，工具通过 ToolRuntime
+    按需读取，LLM 初始轮不直接分析图像。.
     """
 
     def __init__(
-            self,
-            rag_engine: Optional[YuYuanRAG] = None,
-            api_key: Optional[str] = None,
-            base_url: Optional[str] = None,
-            model: Optional[str] = None,
-            yolo_model=None,
-            agent_history_limit: int = 10,
+        self,
+        rag_engine: YuYuanRAG | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        yolo_model=None,
+        agent_history_limit: int = 10,
     ):
         # 1. 外部依赖注入
         self.rag = rag_engine or YuYuanRAG(config.FAISS_INDEX_PATH)
-        self._yolo_model = yolo_model          # 由 detection_websocket.py 传入已加载的 YOLO 实例
+        self._yolo_model = yolo_model  # 由 detection_websocket.py 传入已加载的 YOLO 实例
         self.agent_history_limit = agent_history_limit
 
         # 2. LLM 初始化
@@ -125,9 +128,8 @@ class YuYuanGuidanceAgent:
 
         @tool
         def rag_search(query: str, runtime: ToolRuntime) -> str:
-            """根据关键词检索豫园景点的历史文化知识。
-            适合回答"是什么""有什么历史""典故""形状"等知识性问题。
-            query: 用户问题或景点名称关键词。"""
+            """根据关键词检索豫园景点的历史文化知识。 适合回答"是什么""有什么历史""典故""形状"等知识性问题。 query: 用户问题或景点名称关键词。.
+            """
             results = rag.retrieve_with_score(query, k=config.RERANK_TOP_K, rerank=config.RERANK)
             if not results:
                 return "未找到相关景点资料。"
@@ -135,9 +137,8 @@ class YuYuanGuidanceAgent:
 
         @tool
         def yolo_detect(runtime: ToolRuntime) -> str:
-            """对当前图像进行 YOLO 目标检测，快速识别图中豫园景点的类别和置信度。
-            返回文字描述，如"检测到：三穗堂(0.92)、荷花池(0.87)"。
-            无需传参，自动读取当前会话图像。"""
+            """对当前图像进行 YOLO 目标检测，快速识别图中豫园景点的类别和置信度。 返回文字描述，如"检测到：三穗堂(0.92)、荷花池(0.87)"。 无需传参，自动读取当前会话图像。.
+            """
             if yolo_model is None:
                 return "YOLO 检测服务不可用（未注入模型）。"
             image_base64 = runtime.state.get("current_image_base64", "")
@@ -167,16 +168,15 @@ class YuYuanGuidanceAgent:
 
         @tool
         def image_understand(question: str, runtime: ToolRuntime) -> str:
-            """调用视觉模型理解当前图像，回答关于图像场景、建筑细节、风格的问题。
-            适合需要详细描述的情况。
-            question: 关于图像的具体问题。无需传入图像，自动读取当前会话图像。"""
+            """调用视觉模型理解当前图像，回答关于图像场景、建筑细节、风格的问题。 适合需要详细描述的情况。 question: 关于图像的具体问题。无需传入图像，自动读取当前会话图像。.
+            """
             image_base64 = runtime.state.get("current_image_base64", "")
             if not image_base64:
                 return "当前会话没有可供理解的图像。"
             try:
                 human_content = [
                     {"type": "text", "text": question},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}},
                 ]
                 response = llm.invoke([HumanMessage(content=human_content)])
                 return response.content
@@ -194,17 +194,12 @@ class YuYuanGuidanceAgent:
 
         @before_model
         def trim_history(state: YuYuanAgentState, runtime: Runtime) -> dict[str, Any] | None:
-            """模型调用前，限制历史消息数量，防止 Token 溢出。"""
+            """模型调用前，限制历史消息数量，防止 Token 溢出。."""
             messages = state["messages"]
             if len(messages) <= limit:
                 return None
             recent = messages[-limit:]
-            return {
-                "messages": [
-                    RemoveMessage(id=REMOVE_ALL_MESSAGES),
-                    *recent
-                ]
-            }
+            return {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *recent]}
 
         return [trim_history]
 
@@ -214,7 +209,7 @@ class YuYuanGuidanceAgent:
 
     def _load_system_prompt(self) -> str:
         if os.path.exists(config.SYSTEM_PROMPT_PATH):
-            with open(config.SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as f:
+            with open(config.SYSTEM_PROMPT_PATH, encoding="utf-8") as f:
                 return f.read()
         return "你是豫园的专业导游，请为听障人士提供简洁、具象的视觉导览。优先参考背景资料。"
 
@@ -223,7 +218,7 @@ class YuYuanGuidanceAgent:
     # =========================================================================
 
     def clear_session_history(self, session_id: str):
-        """清除指定会话的 checkpointer 记录。"""
+        """清除指定会话的 checkpointer 记录。."""
         try:
             storage = self._checkpointer.storage
             keys_to_delete = [k for k in storage if k[0] == session_id]
@@ -281,7 +276,7 @@ class YuYuanGuidanceAgent:
 
     @staticmethod
     def _log_trace(messages: list):
-        """打印本次调用的工具调用轨迹。"""
+        """打印本次调用的工具调用轨迹。."""
         print("[Trace] ┌" + "─" * 50)
         for msg in messages:
             if isinstance(msg, HumanMessage):
@@ -301,11 +296,11 @@ class YuYuanGuidanceAgent:
         print("[Trace] └" + "─" * 50)
 
     async def generate_guidance(
-            self,
-            user_query: str,
-            session_id: str = "unity_user_01",
+        self,
+        user_query: str,
+        session_id: str = "unity_user_01",
     ) -> str:
-        """文本导览接口（无图像）。"""
+        """文本导览接口（无图像）。."""
         try:
             prev = self.agent.get_state({"configurable": {"thread_id": session_id}})
             prev_count = len(prev.values.get("messages", [])) if prev and prev.values else 0
@@ -321,25 +316,20 @@ class YuYuanGuidanceAgent:
             return "导览助手暂时无法连接，请稍后再试。"
 
     async def generate_guidance_with_image(
-            self,
-            user_query: str,
-            session_id: str = "unity_user_01",
-            image_path: Optional[str] = None,
-            image_base64: Optional[str] = None,
+        self,
+        user_query: str,
+        session_id: str = "unity_user_01",
+        image_path: str | None = None,
+        image_base64: str | None = None,
     ) -> str:
-        """图文导览接口。
-        图像存入 state（current_image_base64），LLM 初始轮仅收到文字，
-        Agent 自行决定是否调用 yolo_detect 或 image_understand 工具来处理图像。
+        """图文导览接口。 图像存入 state（current_image_base64），LLM 初始轮仅收到文字， Agent 自行决定是否调用 yolo_detect 或 image_understand
+        工具来处理图像。.
         """
         try:
             if not image_path and not image_base64:
                 return "请提供图片路径或 base64 图片数据。"
 
-            encoded = (
-                self._normalize_base64(image_base64)
-                if image_base64
-                else self._image_file_to_base64(image_path)
-            )
+            encoded = self._normalize_base64(image_base64) if image_base64 else self._image_file_to_base64(image_path)
             if not encoded:
                 return "图片数据无效，请重新上传。"
 
