@@ -1,28 +1,30 @@
 """
-单元测试：YuYuanGuidanceAgent
+单元测试：YuYuanGuidanceAgent.
 ================================
 策略：绕过真实 __init__（避免初始化 LLM/RAG），
 通过 object.__new__ + 手动赋属性来测试各个方法。
 需要真实 agent 执行的测试使用轻量 DummyAgent mock。
 """
-import pytest
-import os
-import io
+
 import base64
+import io
+
+import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 from PIL import Image
-from langchain_core.messages import HumanMessage, AIMessage
 
-from LangChain.guidance_agent import YuYuanGuidanceAgent, YuYuanAgentState, _apply_nms
-
+from LangChain.guidance_agent import YuYuanAgentState, YuYuanGuidanceAgent, _apply_nms
 
 # ============================================================================
 # 审查输出辅助
 # ============================================================================
 
+
 def _section(title: str):
     print(f"\n{'─' * 60}")
     print(f"  {title}")
     print(f"{'─' * 60}")
+
 
 def _show(label: str, value):
     val_str = str(value)
@@ -35,6 +37,7 @@ def _show(label: str, value):
 # 公共 Dummy 组件
 # ============================================================================
 
+
 class DummyRAG:
     def retrieve_with_score(self, query, k=3, rerank=False):
         if not query:
@@ -45,7 +48,8 @@ class DummyRAG:
 
 
 class DummyAgent:
-    """模拟 create_agent 返回的 agent 对象，用于测试 generate_guidance* 接口。"""
+    """模拟 create_agent 返回的 agent 对象，用于测试 generate_guidance* 接口。."""
+
     def __init__(self, response="导览建议：从九曲桥入口开始参观。", raise_error=False):
         self._response = response
         self._raise_error = raise_error
@@ -70,9 +74,10 @@ class DummyCheckpointer:
 # Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def agent():
-    """创建最小化 agent 实例，跳过真实 __init__。"""
+    """创建最小化 agent 实例，跳过真实 __init__。."""
     a = object.__new__(YuYuanGuidanceAgent)
     a.rag = DummyRAG()
     a._yolo_model = None
@@ -85,6 +90,7 @@ def agent():
 # ============================================================================
 # _apply_nms 测试
 # ============================================================================
+
 
 def test_apply_nms_empty():
     _section("NMS | 空输入")
@@ -136,6 +142,7 @@ def test_apply_nms_keeps_non_overlap():
 # ============================================================================
 # 图像辅助方法测试
 # ============================================================================
+
 
 def test_image_file_to_base64_compresses_large_image(tmp_path):
     _section("图像编码 | 大图压缩 + base64 编码")
@@ -207,6 +214,7 @@ def test_normalize_base64_empty():
 # 会话管理测试
 # ============================================================================
 
+
 def test_clear_session_history_removes_matching_keys(agent):
     _section("会话管理 | clear_session_history 按 thread_id 清除")
     storage_before = {
@@ -243,6 +251,7 @@ def test_delete_session_history_delegates_to_clear(agent, monkeypatch):
 # ============================================================================
 # generate_guidance 接口测试
 # ============================================================================
+
 
 @pytest.mark.asyncio
 async def test_generate_guidance_success(agent):
@@ -300,6 +309,7 @@ async def test_generate_guidance_fail_returns_fallback(agent):
 # ============================================================================
 # generate_guidance_with_image 接口测试
 # ============================================================================
+
 
 @pytest.mark.asyncio
 async def test_generate_guidance_with_image_no_image_provided(agent):
@@ -426,6 +436,7 @@ async def test_generate_guidance_with_image_llm_error_fallback(agent):
 # ============================================================================
 # YuYuanAgentState 结构测试
 # ============================================================================
+
 
 def test_agent_state_has_image_field():
     _section("YuYuanAgentState | current_image_base64 字段存在且默认为空")

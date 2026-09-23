@@ -1,5 +1,5 @@
 """
-YuYuan 控制客户端（PyQt5）
+YuYuan 控制客户端（PyQt5）.
 ===========================
 连接 WebSocket 服务端，注册为控制客户端，选择目标检测客户端并发送命令按钮。
 
@@ -7,31 +7,41 @@ YuYuan 控制客户端（PyQt5）
     python control_client.py
 """
 
-import sys
 import asyncio
 import json
+import sys
 import threading
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QComboBox, QGridLayout, QStatusBar
-)
-from PyQt5.QtCore import Qt, pyqtSignal, QObject
+
 import websockets
+from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QPushButton,
+    QStatusBar,
+    QVBoxLayout,
+    QWidget,
+)
 
 # ============================================================================
 # 按钮配置（与服务端 BUTTON_CONFIGS 保持一致，修改 name 自定义名称）
 # ============================================================================
 
 BUTTON_CONFIGS = [
-    {"id": 1,  "name": "按钮1"},
-    {"id": 2,  "name": "按钮2"},
-    {"id": 3,  "name": "按钮3"},
-    {"id": 4,  "name": "按钮4"},
-    {"id": 5,  "name": "按钮5"},
-    {"id": 6,  "name": "按钮6"},
-    {"id": 7,  "name": "按钮7"},
-    {"id": 8,  "name": "按钮8"},
-    {"id": 9,  "name": "按钮9"},
+    {"id": 1, "name": "按钮1"},
+    {"id": 2, "name": "按钮2"},
+    {"id": 3, "name": "按钮3"},
+    {"id": 4, "name": "按钮4"},
+    {"id": 5, "name": "按钮5"},
+    {"id": 6, "name": "按钮6"},
+    {"id": 7, "name": "按钮7"},
+    {"id": 8, "name": "按钮8"},
+    {"id": 9, "name": "按钮9"},
     {"id": 10, "name": "按钮10"},
 ]
 
@@ -43,7 +53,7 @@ CLIENT_ID = "control_client_python"
 
 
 class _Bridge(QObject):
-    client_list_updated = pyqtSignal(list)   # list of {connection_id, device_id, device_name}
+    client_list_updated = pyqtSignal(list)  # list of {connection_id, device_id, device_name}
     status_changed = pyqtSignal(str)
 
 
@@ -90,31 +100,38 @@ async def _connect(url: str):
 
 
 def send_command(target_connection_id: str, button_id: int, button_name: str):
-    """从 Qt 线程安全地发送命令到 asyncio 循环。"""
+    """从 Qt 线程安全地发送命令到 asyncio 循环。."""
     if _ws is None or _ws_loop is None:
         bridge.status_changed.emit("未连接，无法发送命令")
         return
-    payload = json.dumps({
-        "type": "send_command",
-        "target_connection_id": target_connection_id,
-        "button_id": button_id,
-        "button_name": button_name,
-    }, ensure_ascii=False)
+    payload = json.dumps(
+        {
+            "type": "send_command",
+            "target_connection_id": target_connection_id,
+            "button_id": button_id,
+            "button_name": button_name,
+        },
+        ensure_ascii=False,
+    )
     asyncio.run_coroutine_threadsafe(_ws.send(payload), _ws_loop)
 
 
 def send_query(target_connection_id: str, query: str):
-    """从 Qt 线程安全地发送 Chat 查询到 asyncio 循环。"""
+    """从 Qt 线程安全地发送 Chat 查询到 asyncio 循环。."""
     if _ws is None or _ws_loop is None:
         bridge.status_changed.emit("未连接，无法发送 Chat")
         return
 
-    payload = json.dumps({
-        "type": "query",
-        "target_connection_id": target_connection_id,
-        "query": query,
-    }, ensure_ascii=False)
+    payload = json.dumps(
+        {
+            "type": "query",
+            "target_connection_id": target_connection_id,
+            "query": query,
+        },
+        ensure_ascii=False,
+    )
     asyncio.run_coroutine_threadsafe(_ws.send(payload), _ws_loop)
+
 
 # ============================================================================
 # 主窗口
@@ -126,7 +143,7 @@ class ControlWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("YuYuan 控制客户端")
         self.setMinimumWidth(560)
-        self._detection_clients = []   # list of dict
+        self._detection_clients = []  # list of dict
         self._setup_ui()
         self._connect_signals()
 
@@ -241,6 +258,7 @@ class ControlWindow(QMainWindow):
 # ============================================================================
 # 入口
 # ============================================================================
+
 
 def main():
     app = QApplication(sys.argv)

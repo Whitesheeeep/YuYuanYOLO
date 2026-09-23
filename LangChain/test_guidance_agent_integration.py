@@ -1,18 +1,20 @@
 """
-集成测试：YuYuanGuidanceAgent（真实 RAG + 真实 LLM）
+集成测试：YuYuanGuidanceAgent（真实 RAG + 真实 LLM）.
 ====================================================
 标记为 integration，默认不在 CI 中执行。
 运行方式：pytest -m integration LangChain/test_guidance_agent_integration.py -v -s
 """
-import pytest
-import os
-import io
+
 import base64 as b64_module
+import io
+import os
 import tempfile
+
+import pytest
+from dotenv import load_dotenv
 from PIL import Image
 
 from LangChain.guidance_agent import YuYuanGuidanceAgent
-from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -24,6 +26,7 @@ def _section(title: str):
     print(f"  {title}")
     print(f"{'═' * 60}")
 
+
 def _show(label: str, value):
     val_str = str(value)
     if len(val_str) > 200:
@@ -33,7 +36,7 @@ def _show(label: str, value):
 
 @pytest.mark.asyncio
 async def test_generate_guidance_with_real_rag_and_llm():
-    """集成测试：使用真实 RAG + 真实 LLM，验证文本导览主流程可用。"""
+    """集成测试：使用真实 RAG + 真实 LLM，验证文本导览主流程可用。."""
     _section("集成 | 文本导览（真实 RAG + LLM）")
     query = "九曲桥为什么是弯的？请用两句话简洁回答。"
     session = "integration_user_01"
@@ -56,7 +59,7 @@ async def test_generate_guidance_with_real_rag_and_llm():
 
 @pytest.mark.asyncio
 async def test_generate_guidance_with_memory_real_stack():
-    """集成测试：连续提问，验证真实链路下的会话记忆不报错。"""
+    """集成测试：连续提问，验证真实链路下的会话记忆不报错。."""
     _section("集成 | 多轮会话记忆")
     session_id = "integration_user_02"
     q1 = "我现在在九曲桥。"
@@ -83,9 +86,10 @@ async def test_generate_guidance_with_memory_real_stack():
 # 图像接口集成测试
 # ============================================================================
 
+
 @pytest.mark.asyncio
 async def test_generate_guidance_with_image_path():
-    """集成测试：传入图片路径，验证 yolo_detect / image_understand tool 被正确触发。"""
+    """集成测试：传入图片路径，验证 yolo_detect / image_understand tool 被正确触发。."""
     _section("集成 | 图文导览（image_path 分支）")
 
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
@@ -116,7 +120,7 @@ async def test_generate_guidance_with_image_path():
 
 @pytest.mark.asyncio
 async def test_generate_guidance_with_image_base64():
-    """集成测试：传入纯 base64 字符串，验证图像存入 state 后工具可正常读取。"""
+    """集成测试：传入纯 base64 字符串，验证图像存入 state 后工具可正常读取。."""
     _section("集成 | 图文导览（image_base64 分支）")
 
     img = Image.new("RGB", (200, 200), color="red")
@@ -144,7 +148,7 @@ async def test_generate_guidance_with_image_base64():
 
 @pytest.mark.asyncio
 async def test_generate_guidance_with_image_data_uri():
-    """集成测试：传入完整 data URI（带前缀），验证截断前缀后正常处理。"""
+    """集成测试：传入完整 data URI（带前缀），验证截断前缀后正常处理。."""
     _section("集成 | 图文导览（data URI 前缀去除）")
 
     img = Image.new("RGB", (100, 100), color="green")
@@ -172,7 +176,7 @@ async def test_generate_guidance_with_image_data_uri():
 
 @pytest.mark.asyncio
 async def test_generate_guidance_with_image_no_image_returns_hint():
-    """集成测试：既不传 image_path 也不传 image_base64 时，返回提示而非抛错。"""
+    """集成测试：既不传 image_path 也不传 image_base64 时，返回提示而非抛错。."""
     _section("集成 | 图文导览（无图像输入保护）")
     _show("image_path", None)
     _show("image_base64", None)
@@ -190,7 +194,7 @@ async def test_generate_guidance_with_image_no_image_returns_hint():
 
 @pytest.mark.asyncio
 async def test_image_not_exposed_to_llm_in_initial_message():
-    """集成测试：验证图像不出现在 LLM 初始消息中（历史消息无 image_url / 大体积 base64）。"""
+    """集成测试：验证图像不出现在 LLM 初始消息中（历史消息无 image_url / 大体积 base64）。."""
     _section("集成 | 图像隔离验证（不进入 LLM 消息历史）")
 
     img = Image.new("RGB", (100, 100), color="blue")

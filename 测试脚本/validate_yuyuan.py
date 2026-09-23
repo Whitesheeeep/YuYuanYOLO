@@ -1,12 +1,13 @@
 """
 YuYuan 数据集验证脚本
-验证训练好的模型性能
+验证训练好的模型性能.
 """
+
 from ultralytics import YOLO
 
+
 def validate_model(model_path, data_yaml):
-    """
-    验证模型在验证集上的性能
+    """验证模型在验证集上的性能.
 
     Args:
         model_path: 模型权重路径
@@ -32,9 +33,9 @@ def validate_model(model_path, data_yaml):
 
     return metrics
 
-def export_model(model_path, format='onnx'):
-    """
-    导出模型为其他格式
+
+def export_model(model_path, format="onnx"):
+    """导出模型为其他格式.
 
     Args:
         model_path: 模型权重路径
@@ -44,10 +45,11 @@ def export_model(model_path, format='onnx'):
     model.export(format=format)
     print(f"\n模型已导出为 {format} 格式")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # 验证模型
-    model_path = r'E:\Master\ultralytics-main\Unity_Integration\Models\best.onnx'
-    data_yaml = 'datasets/YuYuan/data.yaml'
+    model_path = r"E:\Master\ultralytics-main\Unity_Integration\Models\best.onnx"
+    data_yaml = "datasets/YuYuan/data.yaml"
 
     validate_model(model_path, data_yaml)
 
