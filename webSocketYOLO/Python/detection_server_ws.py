@@ -1,23 +1,24 @@
 import asyncio
-import websockets
-import json
 import base64
+import json
+
 import cv2
 import numpy as np
+import websockets
+
 from ultralytics import YOLO
-from PIL import Image
-import io
 
 # 加载 YOLO 模型
-model = YOLO(r'E:\Master\ultralytics-main\runs\detect\runs\train\yuyuan_exp\weights\best.pt')
+model = YOLO(r"E:\Master\ultralytics-main\runs\detect\runs\train\yuyuan_exp\weights\best.pt")
 ip = "0.0.0.0"
 port = 5000
 
 # 存储所有连接的客户端
 clients = set()
 
+
 async def handle_client(websocket):
-    """处理客户端连接"""
+    """处理客户端连接."""
     # 添加到客户端列表
     clients.add(websocket)
     print(f"新客户端连接，当前连接数: {len(clients)}")
@@ -27,9 +28,9 @@ async def handle_client(websocket):
             # 解析消息
             data = json.loads(message)
 
-            if data['type'] == 'detect':
+            if data["type"] == "detect":
                 # 解码图像
-                image_data = base64.b64decode(data['image'])
+                image_data = base64.b64decode(data["image"])
                 nparr = np.frombuffer(image_data, np.uint8)
                 img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
@@ -51,31 +52,36 @@ async def handle_client(websocket):
 
                         # 绘制边界框
                         cv2.rectangle(detected_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-                        cv2.putText(detected_img, f'{class_name} {conf:.2f}',
-                                  (int(x1), int(y1)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        cv2.putText(
+                            detected_img,
+                            f"{class_name} {conf:.2f}",
+                            (int(x1), int(y1) - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (0, 255, 0),
+                            2,
+                        )
 
                         # 添加到检测列表
-                        detections.append({
-                            'class': class_name,
-                            'confidence': conf,
-                            'bbox': [int(x1), int(y1), int(x2), int(y2)]
-                        })
+                        detections.append(
+                            {"class": class_name, "confidence": conf, "bbox": [int(x1), int(y1), int(x2), int(y2)]}
+                        )
 
                 # 编码图像为 base64
-                _, original_buffer = cv2.imencode('.jpg', img)
+                _, original_buffer = cv2.imencode(".jpg", img)
                 original_base64 = base64.b64encode(original_buffer).decode()
 
-                _, detected_buffer = cv2.imencode('.jpg', detected_img)
+                _, detected_buffer = cv2.imencode(".jpg", detected_img)
                 detected_base64 = base64.b64encode(detected_buffer).decode()
 
                 # 构建响应
                 response = {
-                    'type': 'detection_result',
-                    'device_id': data['device_id'],
-                    'device_name': data['device_name'],
-                    'original_image': original_base64,
-                    'detected_image': detected_base64,
-                    'detections': detections
+                    "type": "detection_result",
+                    "device_id": data["device_id"],
+                    "device_name": data["device_name"],
+                    "original_image": original_base64,
+                    "detected_image": detected_base64,
+                    "detections": detections,
                 }
 
                 # 广播到所有客户端（包括监控界面）
@@ -88,13 +94,12 @@ async def handle_client(websocket):
         clients.remove(websocket)
         print(f"客户端断开，当前连接数: {len(clients)}")
 
+
 async def broadcast(message):
-    """广播消息到所有客户端"""
+    """广播消息到所有客户端."""
     if clients:
-        await asyncio.gather(
-            *[client.send(message) for client in clients],
-            return_exceptions=True
-        )
+        await asyncio.gather(*[client.send(message) for client in clients], return_exceptions=True)
+
 
 async def main():
     print("启动 WebSocket 服务器...")
@@ -102,6 +107,7 @@ async def main():
 
     async with websockets.serve(handle_client, ip, port):
         await asyncio.Future()  # 永久运行
+
 
 if __name__ == "__main__":
     asyncio.run(main())

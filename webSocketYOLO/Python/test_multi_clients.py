@@ -1,5 +1,5 @@
 """
-多客户端测试脚本
+多客户端测试脚本.
 
 功能：模拟多个客户端同时连接到服务器，测试服务器端的客户端管理功能
 
@@ -11,20 +11,21 @@
 """
 
 import asyncio
-import websockets
-import json
 import base64
-import cv2
-import numpy as np
+import json
 import sys
 
+import cv2
+import numpy as np
+import websockets
+
 # 设置输出编码为 UTF-8
-if sys.platform == 'win32':
-    sys.stdout.reconfigure(encoding='utf-8')
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+
 
 async def test_client(device_id, device_name, color, server_url="ws://192.168.5.45:5000"):
-    """
-    模拟单个客户端
+    """模拟单个客户端.
 
     参数：
         device_id: 设备 ID
@@ -43,24 +44,18 @@ async def test_client(device_id, device_name, color, server_url="ws://192.168.5.
             test_image[:] = color
 
             # 在图像上添加文字
-            cv2.putText(test_image, device_name, (200, 240),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3)
+            cv2.putText(test_image, device_name, (200, 240), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3)
 
             # 编码图像
-            _, buffer = cv2.imencode('.jpg', test_image)
+            _, buffer = cv2.imencode(".jpg", test_image)
             image_base64 = base64.b64encode(buffer).decode()
 
             # 发送 3 次检测请求
             for i in range(3):
                 # 构建测试消息
-                message = {
-                    "type": "detect",
-                    "device_id": device_id,
-                    "device_name": device_name,
-                    "image": image_base64
-                }
+                message = {"type": "detect", "device_id": device_id, "device_name": device_name, "image": image_base64}
 
-                print(f"[{device_name}] 发送第 {i+1} 次检测请求...")
+                print(f"[{device_name}] 发送第 {i + 1} 次检测请求...")
                 await websocket.send(json.dumps(message))
 
                 # 等待响应
@@ -68,7 +63,7 @@ async def test_client(device_id, device_name, color, server_url="ws://192.168.5.
                 data = json.loads(response)
 
                 # 验证响应
-                if data['device_id'] == device_id:
+                if data["device_id"] == device_id:
                     print(f"[{device_name}] ✓ 收到正确的响应 (检测数量: {len(data.get('detections', []))})")
                 else:
                     print(f"[{device_name}] ✗ 收到错误的响应 (device_id: {data['device_id']})")
@@ -88,10 +83,9 @@ async def test_client(device_id, device_name, color, server_url="ws://192.168.5.
     except Exception as e:
         print(f"[{device_name}] ✗ 未知错误: {type(e).__name__}: {e}")
 
+
 async def main():
-    """
-    主函数：并发运行多个客户端
-    """
+    """主函数：并发运行多个客户端."""
     print("=" * 60)
     print("多客户端测试脚本")
     print("=" * 60)
@@ -105,10 +99,7 @@ async def main():
     ]
 
     # 并发运行所有客户端
-    tasks = [
-        test_client(device_id, device_name, color)
-        for device_id, device_name, color in clients
-    ]
+    tasks = [test_client(device_id, device_name, color) for device_id, device_name, color in clients]
 
     await asyncio.gather(*tasks)
 
@@ -116,6 +107,7 @@ async def main():
     print("=" * 60)
     print("所有客户端测试完成")
     print("=" * 60)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
