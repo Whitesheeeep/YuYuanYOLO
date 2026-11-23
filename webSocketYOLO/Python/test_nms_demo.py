@@ -1,5 +1,5 @@
 """
-NMS 功能演示脚本
+NMS 功能演示脚本.
 
 功能：演示 NMS（非极大值抑制）如何过滤重叠的检测框
 
@@ -12,8 +12,9 @@ NMS 功能演示脚本
 import cv2
 import numpy as np
 
+
 def apply_nms(boxes, scores, iou_threshold=0.5):
-    """非极大值抑制"""
+    """非极大值抑制."""
     if len(boxes) == 0:
         return []
 
@@ -50,6 +51,7 @@ def apply_nms(boxes, scores, iou_threshold=0.5):
 
     return keep
 
+
 def main():
     # 创建测试图像
     img = np.ones((600, 800, 3), dtype=np.uint8) * 255
@@ -70,8 +72,9 @@ def main():
     for i, (box, score) in enumerate(zip(boxes, scores)):
         x1, y1, x2, y2 = box
         cv2.rectangle(img_before, (x1, y1), (x2, y2), (0, 0, 255), 2)
-        cv2.putText(img_before, f'Box {i+1}: {score:.2f}',
-                   (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        cv2.putText(
+            img_before, f"Box {i + 1}: {score:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2
+        )
 
     # 应用 NMS
     keep_indices = apply_nms(boxes, scores, iou_threshold=0.5)
@@ -82,30 +85,30 @@ def main():
         x1, y1, x2, y2 = boxes[idx]
         score = scores[idx]
         cv2.rectangle(img_after, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(img_after, f'Box {idx+1}: {score:.2f}',
-                   (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        cv2.putText(
+            img_after, f"Box {idx + 1}: {score:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2
+        )
 
     # 添加标题
-    cv2.putText(img_before, 'Before NMS (All Boxes)', (20, 40),
-               cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-    cv2.putText(img_after, 'After NMS (Filtered)', (20, 40),
-               cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+    cv2.putText(img_before, "Before NMS (All Boxes)", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+    cv2.putText(img_after, "After NMS (Filtered)", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
     # 显示结果
     combined = np.hstack([img_before, img_after])
-    cv2.imshow('NMS Demo', combined)
+    cv2.imshow("NMS Demo", combined)
 
     print("=" * 60)
     print("NMS 演示")
     print("=" * 60)
     print(f"原始检测框数量: {len(boxes)}")
     print(f"NMS 后保留框数量: {len(keep_indices)}")
-    print(f"保留的框索引: {[i+1 for i in keep_indices]}")
+    print(f"保留的框索引: {[i + 1 for i in keep_indices]}")
     print("=" * 60)
     print("按任意键关闭窗口...")
 
     cv2.waitKey(0)
     cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()
