@@ -1,5 +1,5 @@
 """
-真实场景测试：YuYuanGuidanceAgent
+真实场景测试：YuYuanGuidanceAgent.
 ====================================
 用途：用真实图片和真实问题验证 Agent 端到端行为。
       输出结构化日志供人工审查。
@@ -13,8 +13,9 @@
   pytest LangChain/test_real_scenarios.py -v -s -k "multiturn"
 """
 
-import pytest
 import os
+
+import pytest
 from dotenv import load_dotenv
 
 from LangChain.guidance_agent import YuYuanGuidanceAgent
@@ -93,10 +94,12 @@ MULTITURN_SCENARIOS = [
 # 辅助输出
 # ============================================================================
 
+
 def _section(title: str):
     print(f"\n{'═' * 64}")
     print(f"  {title}")
     print(f"{'═' * 64}")
+
 
 def _show(label: str, value, truncate: int = 200):
     val = str(value)
@@ -104,8 +107,9 @@ def _show(label: str, value, truncate: int = 200):
         val = val[:truncate] + f"...（共 {len(str(value))} 字符）"
     print(f"  {label:<30} {val}")
 
+
 def _check_image(path):
-    """检查图片路径是否可访问，返回 (ok, reason)。"""
+    """检查图片路径是否可访问，返回 (ok, reason)。."""
     if path is None:
         return True, "纯文字查询，无需图片"
     if not os.path.exists(path):
@@ -115,9 +119,11 @@ def _check_image(path):
         return False, "文件为空"
     return True, f"文件大小 {size / 1024:.1f} KB"
 
+
 # ============================================================================
 # 单轮场景测试
 # ============================================================================
+
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=[s["id"] for s in SCENARIOS])
 @pytest.mark.asyncio
@@ -165,9 +171,8 @@ async def test_real_scenario(scenario):
 # 多轮场景测试
 # ============================================================================
 
-@pytest.mark.parametrize(
-    "scenario", MULTITURN_SCENARIOS, ids=[s["id"] for s in MULTITURN_SCENARIOS]
-)
+
+@pytest.mark.parametrize("scenario", MULTITURN_SCENARIOS, ids=[s["id"] for s in MULTITURN_SCENARIOS])
 @pytest.mark.asyncio
 async def test_real_multiturn_scenario(scenario):
     sid = scenario["id"]
@@ -179,9 +184,9 @@ async def test_real_multiturn_scenario(scenario):
     # 预检所有图片
     for i, turn in enumerate(turns):
         ok, reason = _check_image(turn["image_path"])
-        _show(f"  轮次 {i+1} 图片状态", reason)
+        _show(f"  轮次 {i + 1} 图片状态", reason)
         if not ok:
-            pytest.skip(f"轮次 {i+1} 图片不可用，跳过: {reason}")
+            pytest.skip(f"轮次 {i + 1} 图片不可用，跳过: {reason}")
 
     agent = YuYuanGuidanceAgent()
     answers = []
@@ -212,14 +217,12 @@ async def test_real_multiturn_scenario(scenario):
         _show("  回答长度 (字符)", len(answer))
         answers.append(answer)
 
-        assert isinstance(answer, str) and answer.strip(), \
-            f"轮次 {i+1} 返回值为空或非字符串"
-        assert answer != "导览助手暂时无法连接，请稍后再试。", \
-            f"轮次 {i+1} 触发兜底文案"
+        assert isinstance(answer, str) and answer.strip(), f"轮次 {i + 1} 返回值为空或非字符串"
+        assert answer != "导览助手暂时无法连接，请稍后再试。", f"轮次 {i + 1} 触发兜底文案"
 
     print(f"\n  ✓ [{sid}] {len(turns)} 轮全部通过")
-    print(f"\n  【对话摘要】")
+    print("\n  【对话摘要】")
     for i, (turn, ans) in enumerate(zip(turns, answers)):
-        print(f"    Q{i+1}: {turn['query']}")
-        preview = ans[:80].replace('\n', ' ')
-        print(f"    A{i+1}: {preview}{'...' if len(ans) > 80 else ''}")
+        print(f"    Q{i + 1}: {turn['query']}")
+        preview = ans[:80].replace("\n", " ")
+        print(f"    A{i + 1}: {preview}{'...' if len(ans) > 80 else ''}")
