@@ -1,23 +1,26 @@
-import os
-import logging
-import time
-from typing import Optional, List, Tuple
+from __future__ import annotations
 
+import logging
+import os
+import time
+
+from dotenv import load_dotenv
+from flashrank import Ranker
 from langchain_classic.retrievers import ContextualCompressionRetriever
 from langchain_community.document_compressors import FlashrankRerank
-from flashrank import Ranker
+from langchain_community.vectorstores import FAISS
+
 # 核心组件
 from langchain_core.documents import Document
-from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings  # 2026 推荐路径
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sympy import true
 
-from dotenv import load_dotenv
 load_dotenv()
 
 # 假设你的项目结构中有 config.py
 from . import config
+
 # try:
 #     import config
 # except ImportError:
@@ -40,12 +43,12 @@ logger = logging.getLogger("YuYuanRAG")
 
 
 class YuYuanRAG:
-    """豫园知识库 RAG 检索引擎 - 2026 生产级实现"""
+    """豫园知识库 RAG 检索引擎 - 2026 生产级实现."""
 
-    def __init__(self, index_path: Optional[str] = None):
+    def __init__(self, index_path: str | None = None):
         self.index_path = index_path or config.FAISS_INDEX_PATH
-        self.vectorstore: Optional[FAISS] = None
-        self.embeddings: Optional[HuggingFaceEmbeddings] = None
+        self.vectorstore: FAISS | None = None
+        self.embeddings: HuggingFaceEmbeddings | None = None
 
         # 1. 预初始化 Embedding (BGE-M3 加载较慢，建议只加载一次)
         self._init_embeddings()
@@ -56,7 +59,7 @@ class YuYuanRAG:
         # 3. 初始化 Reranker
         cache_path = "./cache/ranker"
         os.makedirs(cache_path, exist_ok=True)
-        self.ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2", cache_dir= cache_path)
+        self.ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2", cache_dir=cache_path)
         self.base_compressor = FlashrankRerank(client=self.ranker)
 
         if self.vectorstore:
@@ -68,14 +71,14 @@ class YuYuanRAG:
             logger.warning("[RAG] 未找到有效索引，请确保后续调用 build_from_text()")
 
     def _init_embeddings(self):
-        """初始化嵌入模型，增加异常捕获"""
+        """初始化嵌入模型，增加异常捕获."""
         if self.embeddings is None:
             try:
                 logger.info(f"[RAG] 正在加载 Embedding 模型: {config.EMBEDDING_MODEL}...")
                 self.embeddings = HuggingFaceEmbeddings(
                     model_name=config.EMBEDDING_MODEL,
                     model_kwargs={"device": config.EMBEDDING_DEVICE},
-                    encode_kwargs={"normalize_embeddings": True}
+                    encode_kwargs={"normalize_embeddings": True},
                 )
                 logger.info("[RAG] Embedding 模型加载成功")
             except Exception as e:
@@ -84,21 +87,19 @@ class YuYuanRAG:
 
     def _init_compression_retriver(self):
         self.compression_retriver = ContextualCompressionRetriever(
-            base_compressor= self.base_compressor,
-            base_retriever= self.base_retriever,
+            base_compressor=self.base_compressor,
+            base_retriever=self.base_retriever,
         )
 
     def _try_load_index(self) -> bool:
-        """安全加载 FAISS 索引"""
+        """安全加载 FAISS 索引."""
         # 检查关键文件 index.faiss 是否存在
         faiss_file = os.path.join(self.index_path, "index.faiss")
         if os.path.exists(faiss_file):
             try:
                 # 2026年强制要求 allow_dangerous_deserialization
                 self.vectorstore = FAISS.load_local(
-                    self.index_path,
-                    self.embeddings,
-                    allow_dangerous_deserialization=True
+                    self.index_path, self.embeddings, allow_dangerous_deserialization=True
                 )
                 logger.info(f"[RAG] 成功载入本地索引: {self.index_path}")
                 return True
@@ -108,27 +109,24 @@ class YuYuanRAG:
 
     # 构建 向量库
     def build_from_text(self, text_file: str):
-        """从纯文本构建知识库（含语义切分逻辑）"""
+        """从纯文本构建知识库（含语义切分逻辑）."""
         if not os.path.exists(text_file):
             raise FileNotFoundError(f"知识库源文件不存在: {text_file}")
 
         logger.info(f"[RAG] 正在从 {text_file} 构建索引...")
 
-        with open(text_file, "r", encoding="utf-8") as f:
+        with open(text_file, encoding="utf-8") as f:
             raw_text = f.read()
 
         # 语义切分
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=config.CHUNK_SIZE,
             chunk_overlap=config.CHUNK_OVERLAP,
-            separators=["\n\n", "\n", "。", "！", "？", "；", " ", ""]
+            separators=["\n\n", "\n", "。", "！", "？", "；", " ", ""],
         )
 
         # 封装为 Document 对象并切分
-        initial_doc = Document(
-            page_content=raw_text,
-            metadata={"source": os.path.basename(text_file)}
-        )
+        initial_doc = Document(page_content=raw_text, metadata={"source": os.path.basename(text_file)})
         documents = splitter.split_documents([initial_doc])
 
         # 构建向量库
@@ -143,7 +141,7 @@ class YuYuanRAG:
         self.vectorstore.save_local(self.index_path)
         logger.info(f"[RAG] 索引构建完成并保存至: {self.index_path} (共 {len(documents)} 块)")
 
-    def retrieve(self, query: str, k: int = 3, rerank: bool = True) -> List[str]:
+    def retrieve(self, query: str, k: int = 3, rerank: bool = True) -> list[str]:
         print(f"[RAG] 收到查询: '{query}'，参数 - k: {k}, rerank: {rerank}")
         if not rerank:
             """执行相似度检索"""
@@ -171,7 +169,9 @@ class YuYuanRAG:
                 docs = self.vectorstore.similarity_search(query, k=k)
                 return [doc.page_content for doc in docs]
 
-    def retrieve_with_score(self, query: str, k: int = 3, threshold: float = None, rerank: bool = true) -> List[Tuple[str, float]]:
+    def retrieve_with_score(
+        self, query: str, k: int = 3, threshold: float | None = None, rerank: bool = true
+    ) -> list[tuple[str, float]]:
         if not self.is_ready():
             return []
 
@@ -199,7 +199,9 @@ class YuYuanRAG:
             try:
                 compressed_docs = self.compression_retriver.invoke(query)
                 print(compressed_docs)
-                print(f"[RAG] 重排序后返回 {len(compressed_docs)} 条结果，第 0 条: {compressed_docs[0].page_content[:100]}...")
+                print(
+                    f"[RAG] 重排序后返回 {len(compressed_docs)} 条结果，第 0 条: {compressed_docs[0].page_content[:100]}..."
+                )
                 # 筛选分数过低的
                 results = []
                 for doc in compressed_docs:
@@ -207,7 +209,7 @@ class YuYuanRAG:
                     print(score)
                     if score >= threshold:
                         results.append((doc.page_content, float(score)))
-                return results[:k] # 2026年版本调整：重排序结果默认相似度为 1.0，实际应用中可以根据需要调整为其他值
+                return results[:k]  # 2026年版本调整：重排序结果默认相似度为 1.0，实际应用中可以根据需要调整为其他值
             except Exception as e:
                 logger.error(f"[RAG] 检索或重排序出错: {e}")
                 # 降级处理：如果 Reranker 出错，退回到基础的 FAISS 检索
@@ -222,6 +224,5 @@ class YuYuanRAG:
                 return results
 
     def is_ready(self) -> bool:
-        """检查引擎是否可用"""
+        """检查引擎是否可用."""
         return self.vectorstore is not None and self.embeddings is not None
-
